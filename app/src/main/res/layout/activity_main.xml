@@ -9,19 +9,34 @@
     tools:context=".MainActivity">
 
     <LinearLayout
+        xmlns:android="http://schemas.android.com/apk/res/android"
+        android:orientation="vertical"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginTop="8dp">
+        android:layout_height="match_parent"
+        android:padding="16dp">
+
+        <ListView
+            android:id="@+id/listView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"/>
 
         <Button
-            android:id="@+id/buttonListLocalFiles"
-            android:layout_width="0dp"
+            android:id="@+id/decodeButton"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="スマホ内ﾌｧｲﾙ表示"
-            android:textSize="12sp"/>
+            android:text="デコード開始"/>
+
+        <!-- プログレスバー（最初は非表示） -->
+        <ProgressBar
+            android:id="@+id/progressBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:visibility="gone"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:indeterminate="true"/>
     </LinearLayout>
+
 
 
     <TextView
@@ -40,16 +55,5 @@
     android:layout_marginTop="8dp"/>
 
 
-    <Button
-        android:id="@+id/startButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="24dp"
-        android:text="Start Decode"
-        android:enabled="true"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/directoryPathText" />
 
 </androidx.appcompat.widget.LinearLayoutCompat>

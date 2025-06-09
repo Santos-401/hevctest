@@ -1,101 +1,112 @@
 package com.brison.hevctest;
 
-// HEVCResolutionExtractor.java
-// → 新規追加クラス。H.265 SPS（NAL unit type 33）の pic_width_in_luma_samples,
-//    pic_height_in_luma_samples をパースします。
-
 import android.util.Pair;
 
 import java.io.ByteArrayOutputStream;
 import java.util.Arrays;
 
+/**
+ * HEVC (H.265) のビットストリームから最初に現れる SPS を抽出し、
+ * RBSP を Exp-Golomb 解析して幅×高さを返すクラス。
+ * ※H.265 でも 3バイト長／4バイト長スタートコードの混在に対応。
+ */
 public class HEVCResolutionExtractor {
 
     public static Pair<Integer, Integer> extractResolution(byte[] data) {
-        int offset = findNalUnit(data, (byte)33);  // nal_unit_type == 33 は SPS
+        int offset = findNalUnit(data, (byte)33); // nal_unit_type == 33 が SPS
         if (offset < 0) return null;
 
-        // スタートコード（0x00000001）以降のバイト列を取り出し、エミュレーション防止バイト除去
+        // スタートコード (3b/4b) を除去し、RBSP データ (Emulation Bytes含む) を取り出す
         byte[] sps = removeEmulationPreventionBytes(
                 Arrays.copyOfRange(data, offset + 4, data.length)
         );
         BitReader br = new BitReader(sps);
 
-        // HEVC NAL ヘッダ（2 バイト）を読み飛ばし
+        // NAL ヘッダ（16bit）を読み飛ばし
         br.readBits(16);
 
-        // vps_id(4), max_sub_layers_minus1(3), temporal_id_nesting_flag(1)
-        br.readBits(4);
-        int maxSubLayers = br.readBits(3);
-        br.readBit();
+        // profile_tier_level の解析
+        br.readBits(4);      // general_profile_space + general_tier_flag + general_profile_idc
+        br.readBits(32);     // general_profile_compatibility_flags
+        br.readBits(48);     // general_constraint_indicator_flags
+        br.readBits(8);      // general_level_idc
 
-        // profile_tier_level() をパースしてビットを消費
-        parseProfileTierLevel(br, maxSubLayers);
+        int maxSubLayersMinus1 = br.readBits(3);
+        br.readBit();        // general_tier_flag の次の reserved_bit
+        parseProfileTierLevel(br, maxSubLayersMinus1);
 
-        // sps_seq_parameter_set_id
-        br.readUE();
+        br.readUE(); // sps_seq_parameter_set_id
 
-        // chroma_format_idc
-        int chroma = br.readUE();
-        if (chroma == 3) {
+        int chromaFormatIdc = br.readUE();
+        if (chromaFormatIdc == 3) {
             br.readBit(); // separate_colour_plane_flag
         }
 
-        // ここで幅・高さを取得
-        int picWidth  = (int)br.readUE();
-        int picHeight = (int)br.readUE();
+        int picWidth = br.readUE();  // pic_width_in_luma_samples_div2
+        int picHeight = br.readUE(); // pic_height_in_luma_samples_div2
 
-        // conformance_window_flag が立っていれば、クロップ値を飛ばす
-        if (br.readBit() == 0) {
-            br.readUE();  // left_offset
-            br.readUE();  // right_offset
-            br.readUE();  // top_offset
-            br.readUE();  // bottom_offset
+        if (br.readBit() == 1) { // conformance_window_flag
+            br.readUE(); // conf_win_left_offset
+            br.readUE(); // conf_win_right_offset
+            br.readUE(); // conf_win_top_offset
+            br.readUE(); // conf_win_bottom_offset
         }
 
         return new Pair<>(picWidth, picHeight);
     }
 
+    /**
+     * profile_tier_level の一部を読み飛ばす
+     */
     private static void parseProfileTierLevel(BitReader br, int maxSubLayersMinus1) {
-        // profile_space(2), tier_flag(1), profile_idc(5)
-        br.readBits(8);
-        // profile_compatibility_flags(32) + constraint_flags(48) + level_idc(8)
-        br.readBits(32);
-        br.readBits(48);
-        br.readBits(8);
-        // sub_layer_profile_present_flag と sub_layer_level_present_flag
+        // sub_layer_profile_present_flag や sub_layer_level_present_flag をチェックして
+        // 必要に応じて 88+8 ビット程度を読み飛ばす実装
         for (int i = 0; i < maxSubLayersMinus1; i++) {
-
             if (br.readBit() == 1) {
-                // 同様にビットを飛ばす
-                br.readBits(88);  // sub_layer_profile_space〜constraint_flags 合計
-                br.readBits(8);   // sub_layer_level_idc
+                br.readBits(88);
+                br.readBits(8);
             }
         }
     }
 
+    /**
+     * 3バイト長 OR 4バイト長スタートコードを検出し、
+     * その後の NAL ヘッダバイトを読み取り、nal_unit_type を返す。
+     */
     private static int findNalUnit(byte[] data, byte nalType) {
         for (int i = 0; i + 4 < data.length; i++) {
+            int header;
+            // 4バイト長スタートコード
             if (data[i] == 0x00 && data[i+1] == 0x00 && data[i+2] == 0x00 && data[i+3] == 0x01) {
-                // 次のバイトから nal header を読み、nal_unit_type をチェック
-                int header = data[i+4] & 0xFF;
-                int type = (header >> 1) & 0x3F;
-                if (type == (nalType & 0x3F)) {
-                    return i;
-                }
+                header = data[i + 4] & 0xFF;
+            }
+            // 3バイト長スタートコード
+            else if (i + 2 < data.length
+                    && data[i] == 0x00 && data[i+1] == 0x00 && data[i+2] == 0x01) {
+                header = data[i + 3] & 0xFF;
+            }
+            else {
+                continue;
+            }
+            int type = (header >> 1) & 0x3F; // ヘッダビットから nal_unit_type を取得
+            if (type == (nalType & 0x3F)) {
+                return i;
             }
         }
         return -1;
     }
 
+    /**
+     * Emulation Prevention Bytes (0x00 00 03) を除去する
+     */
     private static byte[] removeEmulationPreventionBytes(byte[] data) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         for (int i = 0; i < data.length; i++) {
-            // 0x000003 パターンを検出したら 0x03 をスキップ
-            if (i+2 < data.length && data[i]==0x00 && data[i+1]==0x00 && data[i+2]==0x03) {
-                out.write(0);
-                out.write(0);
-                i += 2;
+            if (i + 2 < data.length
+                    && data[i] == 0x00 && data[i+1] == 0x00 && data[i+2] == 0x03) {
+                out.write(0x00);
+                out.write(0x00);
+                i += 2; // 0x03 をスキップ
             } else {
                 out.write(data[i]);
             }

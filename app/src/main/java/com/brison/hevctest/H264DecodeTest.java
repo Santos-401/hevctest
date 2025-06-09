@@ -1,312 +1,192 @@
 package com.brison.hevctest;
 
-import android.content.Context;
+import android.graphics.ImageFormat;
+import android.media.Image;
+import android.media.ImageReader;
 import android.media.MediaCodec;
-import android.media.MediaCodecInfo;
-import android.media.MediaCodecList;
 import android.media.MediaFormat;
-import android.net.Uri;
-import android.os.Build;
+import android.os.Handler;
+import android.os.HandlerThread;
 import android.util.Log;
-import android.util.Range;
+
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
-import android.util.Pair;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class H264DecodeTest {
-    private static final long TIMEOUT_US = 10000;
-    private static final String TAG = "com.brison.example";
+    private static final String TAG = "H264DecodeTest";
+    private static final long TIMEOUT_US = 10000L;
 
-    public static void decodeRawBitstream(String inputPath, String outputPath) throws IOException {
-        boolean isHevc = inputPath.toLowerCase().endsWith(".bit");
-        String mime = isHevc
-                ? MediaFormat.MIMETYPE_VIDEO_HEVC
-                : MediaFormat.MIMETYPE_VIDEO_AVC;
+    public static int decodeRawBitstream(String inputPath, String outputPath) throws IOException {
+        MediaCodec decoder = null;
+        ImageReader imageReader = null;
+        HandlerThread imageReaderThread = null;
+        final AtomicBoolean decodeComplete = new AtomicBoolean(false);
 
-        // ファイル丸ごと読み込み
-        byte[] raw = null;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            raw = new FileInputStream(inputPath).readAllBytes();
-        }
+        try {
+            // 解像度を事前に取得（この部分は元のロジックを使用）
+            byte[] initialData = readFileToByteArray(inputPath);
+            android.util.Pair<Integer, Integer> res = H264ResolutionExtractor.extractResolution(initialData);
+            int width = (res != null) ? res.first : 352;
+            int height = (res != null) ? res.second : 288;
+            Log.i(TAG, "Detected resolution: " + width + "x" + height);
 
-        // 解像度抽出
-        Pair<Integer, Integer> res = isHevc
-                ? HEVCResolutionExtractor.extractResolution(raw)
-                : H264ResolutionExtractor.extractResolution(raw);
-        if (res == null) {
-            Log.w(TAG, "解像度抽出失敗、デフォルト 352x288 を使用");
-            res = new Pair<>(352, 288);
-        }
-        int width  = res.first;
-        int height = res.second;
-        Log.i(TAG, "解像度: " + width + "x" + height);
+            // ImageReaderと、そのコールバック用のハンドラースレッドを準備
+            imageReaderThread = new HandlerThread("ImageReaderThread");
+            imageReaderThread.start();
+            Handler imageReaderHandler = new Handler(imageReaderThread.getLooper());
 
-        // MediaCodec 初期化
-        MediaCodec codec = MediaCodec.createDecoderByType(mime);
-        MediaFormat format = MediaFormat.createVideoFormat(mime, width, height);
-        codec.configure(format, null, null, 0);
-        codec.start();
+            final String finalOutputPath = outputPath;
+            imageReader = ImageReader.newInstance(width, height, ImageFormat.YUV_420_888, 2);
+            imageReader.setOnImageAvailableListener(reader -> {
+                try (Image image = reader.acquireNextImage()) {
+                    if (image != null) {
+                        Log.i(TAG, "<<< Frame Available! Writing to " + finalOutputPath);
+                        dumpYuvImage(image, finalOutputPath);
+                        // 1フレームのみ出力して終了する例。連続したフレームを出力する場合はロジック変更が必要。
+                        decodeComplete.set(true);
+                    }
+                } catch (IOException e) {
+                    Log.e(TAG, "Failed to write YUV file.", e);
+                }
+            }, imageReaderHandler);
 
-        // NAL ユニットに分割
-        List<byte[]> nalUnits = splitNalUnits(raw);
+            // CSDは設定せず、デコーダに自動解析させる
+            MediaFormat format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height);
 
-        FileOutputStream fos = new FileOutputStream(outputPath);
-        MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+            decoder = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+            // 出力先としてImageReaderのSurfaceを指定
+            decoder.configure(format, imageReader.getSurface(), null, 0);
+            decoder.start();
+            Log.i(TAG, "Codec started. Decoding to Surface.");
 
-        int nalIndex = 0;
-        boolean inputDone  = false;
-        boolean outputDone = false;
+            // ファイルをチャンクで読み込み、そのままデコーダに供給
+            try (InputStream inputStream = new FileInputStream(inputPath)) {
+                byte[] buffer = new byte[65536]; // 64KB chunk size
+                boolean inputDone = false;
 
-        while (!outputDone) {
-            // --- 入力バッファ側 ---
-            if (!inputDone) {
-                int inIndex = codec.dequeueInputBuffer(TIMEOUT_US);
-                if (inIndex >= 0) {
-                    ByteBuffer inBuf = codec.getInputBuffer(inIndex);
-                    inBuf.clear();
+                while (!inputDone && !decodeComplete.get()) {
+                    int inputBufIndex = decoder.dequeueInputBuffer(TIMEOUT_US);
+                    if (inputBufIndex >= 0) {
+                        ByteBuffer inputBuffer = decoder.getInputBuffer(inputBufIndex);
+                        int chunkSize = inputStream.read(buffer);
 
-                    if (nalIndex < nalUnits.size()) {
-                        byte[] unit = nalUnits.get(nalIndex++);
-                        inBuf.put(unit);
-                        int flags = (nalIndex == nalUnits.size())
-                                ? MediaCodec.BUFFER_FLAG_END_OF_STREAM
-                                : 0;
-                        codec.queueInputBuffer(inIndex, 0, unit.length, 0, flags);
-                    } else {
-                        // NAL が尽きたら改めて EOS 投入
-                        codec.queueInputBuffer(inIndex, 0, 0, 0,
-                                MediaCodec.BUFFER_FLAG_END_OF_STREAM);
-                        inputDone = true;
+                        if (chunkSize > 0) {
+                            inputBuffer.clear();
+                            inputBuffer.put(buffer, 0, chunkSize);
+                            decoder.queueInputBuffer(inputBufIndex, 0, chunkSize, 0, 0);
+                        } else {
+                            // ファイル終端に到達
+                            Log.i(TAG, "End of stream reached. Sending EOS flag.");
+                            decoder.queueInputBuffer(inputBufIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                            inputDone = true;
+                        }
                     }
                 }
             }
 
-            // --- 出力バッファ側 ---
-            int outIndex = codec.dequeueOutputBuffer(info, TIMEOUT_US);
-            if (outIndex >= 0) {
-                // 正常なバッファ
-                ByteBuffer outBuf = codec.getOutputBuffer(outIndex);
-                if (outBuf != null && info.size > 0) {
-                    byte[] yuv = new byte[info.size];
-                    outBuf.get(yuv);
-                    fos.write(yuv);
+            // デコード完了を待つ（タイムアウト付き）
+            long startTime = System.currentTimeMillis();
+            while (!decodeComplete.get() && (System.currentTimeMillis() - startTime < 5000)) {
+                // dequeueOutputBufferを呼び出してデコーダを進める必要がある
+                MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+                int outIndex = decoder.dequeueOutputBuffer(info, 100);
+                if(outIndex >= 0) {
+                    decoder.releaseOutputBuffer(outIndex, false);
                 }
-                codec.releaseOutputBuffer(outIndex, false);
-
-                // EOS フラグが返ってきたらループを抜ける
-                if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                    outputDone = true;
+                if((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                    break;
                 }
+            }
+            if (!decodeComplete.get()) {
+                Log.w(TAG, "Decoding timed out or did not produce a frame.");
+                return 0; // フレームが1つも得られなかった
+            }
 
-            } else if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                // 出力フォーマットが変わった場合（1 度だけ呼ばれる）
-                MediaFormat newFmt = codec.getOutputFormat();
-                Log.i(TAG, "出力フォーマット変更: " + newFmt);
-            } else if (outIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                // 今は出力無し
+        } finally {
+            if (decoder != null) {
+                decoder.stop();
+                decoder.release();
+                Log.i(TAG, "Codec released.");
+            }
+            if (imageReader != null) {
+                imageReader.close();
+                Log.i(TAG, "ImageReader closed.");
+            }
+            if (imageReaderThread != null) {
+                imageReaderThread.quitSafely();
             }
         }
-
-        fos.close();
-        codec.stop();
-        codec.release();
-        Log.i(TAG, "デコード完了: " + outputPath);
+        Log.i(TAG, "--- Decoding finished successfully for " + outputPath + " ---");
+        return 1; // 成功
     }
 
-    private static String selectCodecName(int width, int height) {
-        MediaCodecList codecList = new MediaCodecList(MediaCodecList.ALL_CODECS);
+    private static void dumpYuvImage(Image image, String filePath) throws IOException {
+        try (FileOutputStream output = new FileOutputStream(filePath, true)) { // 追記モードで開く
+            Image.Plane[] planes = image.getPlanes();
+            ByteBuffer yBuffer = planes[0].getBuffer();
+            ByteBuffer uBuffer = planes[1].getBuffer();
+            ByteBuffer vBuffer = planes[2].getBuffer();
 
-        for (MediaCodecInfo info : codecList.getCodecInfos()) {
-            if (info.isEncoder()) continue;
-            String name = info.getName();
-            if (!name.toLowerCase().contains("avc.decoder")) continue;
-            try {
-                MediaCodecInfo.CodecCapabilities caps = info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC);
-                MediaCodecInfo.VideoCapabilities videoCaps = caps.getVideoCapabilities();
-                Range<Integer> wRange = videoCaps.getSupportedWidths();
-                Range<Integer> hRange = videoCaps.getSupportedHeights();
-                if (wRange.contains(width) && hRange.contains(height)) {
-                    Log.i(TAG, String.format("選択したデコーダ: %s (対応: %dx%d〜%dx%d)",
-                            name,
-                            wRange.getLower(), hRange.getLower(),
-                            wRange.getUpper(), hRange.getUpper()));
-                    return name;
-                }
-            } catch (Exception e) {
-                Log.w(TAG, "Capabilities check failed for " + name, e);
-            }
+            byte[] yBytes = new byte[yBuffer.remaining()];
+            yBuffer.get(yBytes);
+            output.write(yBytes);
+
+            byte[] uBytes = new byte[uBuffer.remaining()];
+            uBuffer.get(uBytes);
+            output.write(uBytes);
+
+            byte[] vBytes = new byte[vBuffer.remaining()];
+            vBuffer.get(vBytes);
+            output.write(vBytes);
         }
-        Log.w(TAG, String.format("対応するハードウェアデコーダが見つかりませんでした (%dx%d)。ソフトウェアにフォールバックします。", width, height));
-        return "OMX.google.h264.decoder";
-
     }
 
-    public static int decodeRaw264(Context context,
-                                   int width,
-                                   int height,
-                                   String assetName,
-                                   Uri outputDirUri) throws IOException {
-        // Read input raw H264 file
-        File inputFile = new File(context.getFilesDir(), assetName);
-        if (!inputFile.exists()) {
-            Log.e(TAG, "Input file not found: " + inputFile.getAbsolutePath());
-            return 0;
-        }
-        byte[] rawData = new byte[(int) inputFile.length()];
-        try (FileInputStream fis = new FileInputStream(inputFile)) {
-            fis.read(rawData);
-        }
-
-
-        // Split NAL units and extract SPS/PPS
-        List<byte[]> nals = splitNalUnits(rawData);
-        byte[][] csd = extractSpsAndPps(nals);
-        if (csd[0] == null || csd[1] == null) {
-            Log.e(TAG, "Failed to extract SPS or PPS");
-            return 0;
-        }
-
-
-        // Configure MediaFormat
-        MediaFormat format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height);
-        format.setByteBuffer("csd-0", ByteBuffer.wrap(csd[0], 1, csd[0].length - 1));
-        format.setByteBuffer("csd-1", ByteBuffer.wrap(csd[1], 1, csd[1].length - 1));
-
-        // Create and start decoder
-        String codecName = selectCodecName(width, height);
-        MediaCodec decoder;
-        try {
-            decoder = MediaCodec.createByCodecName(codecName);
-        } catch (IOException e) {
-            decoder = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
-        }
-        decoder.configure(format, null, null, 0);
-        decoder.start();
-
-        // Prepare single-output YUV file
-        File outDir = new File(outputDirUri.getPath());
-
-        if (!outDir.exists()) outDir.mkdirs();
-//    File outFile = new File(outDir, "all_frames.yuv");
-        String baseName = assetName.contains(".")
-                ? assetName.substring(0, assetName.lastIndexOf('.'))
-                : assetName;
-
-        File outFile = new File(outDir, baseName + ".yuv");
-        FileOutputStream fosAll = new FileOutputStream(outFile);
-
-        AtomicInteger frameCount = new AtomicInteger(0);
-        boolean outputDone = false;
-        int nalIndex = 0;
-        long ptsUs = 0;
-
-        while (!outputDone) {
-            // Queue next NAL
-            if (nalIndex < nals.size()) {
-                int inIndex = decoder.dequeueInputBuffer(TIMEOUT_US);
-                if (inIndex >= 0) {
-                    ByteBuffer inBuf = decoder.getInputBuffer(inIndex);
-                    inBuf.clear();
-                    byte[] nal = nals.get(nalIndex);
-                    inBuf.put(nal);
-                    int flags = (nalIndex == nals.size() - 1) ?
-                            MediaCodec.BUFFER_FLAG_END_OF_STREAM : 0;
-                    decoder.queueInputBuffer(inIndex, 0, nal.length, ptsUs, flags);
-                    ptsUs += 1000000L / 30;
-                    nalIndex++;
-                }
+    private static byte[] readFileToByteArray(String path) throws IOException {
+        try (InputStream is = new FileInputStream(path); ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int len;
+            while ((len = is.read(buffer)) != -1) {
+                baos.write(buffer, 0, len);
             }
-
-            // Retrieve decoded output
-            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-            int outIndex = decoder.dequeueOutputBuffer(info, TIMEOUT_US);
-            if (outIndex >= 0) {
-                ByteBuffer outBuf = decoder.getOutputBuffer(outIndex);
-                if (outBuf != null && info.size > 0) {
-                    byte[] yuv = new byte[info.size];
-                    outBuf.get(yuv);
-                    fosAll.write(yuv);
-                    frameCount.incrementAndGet();
-                }
-                decoder.releaseOutputBuffer(outIndex, false);
-                if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                    outputDone = true;
-                }
-            } else if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                Log.i(TAG, "Output format changed: " + decoder.getOutputFormat());
-            }
+            return baos.toByteArray();
         }
-
-        // Cleanup
-        fosAll.close();
-        decoder.stop();
-        decoder.release();
-        return frameCount.get();
     }
 
-    // --- SPS/PPS 抽出用ヘルパーメソッド ---
-//    private static List<byte[]> splitNalUnits(byte[] data) {
-//        List<byte[]> nals = new ArrayList<>();
-//        int offset = 0;
-//        while (offset < data.length) {
-//            int startCode = findStartCode(data, offset);
-//            if (startCode < 0) break;
-//            int scSize = (data[startCode] == 0 && data[startCode + 1] == 0 && data[startCode + 2] == 1) ? 3 : 4;
-//            int nalStart = startCode + scSize;
-//            int nextStart = findStartCode(data, nalStart);
-//            int nalEnd = (nextStart > 0) ? nextStart : data.length;
-//            nals.add(Arrays.copyOfRange(data, startCode, nalEnd));
-//            offset = nalEnd;
-//        }
-//        return nals;
-//    }
+    // このメソッドはもう使用しませんが、H264ResolutionExtractorが依存しているため残します。
     private static List<byte[]> splitNalUnits(byte[] data) {
-        List<Integer> starts = new ArrayList<>();
-        for (int i = 0; i + 4 < data.length; i++) {
-            if (data[i]==0 && data[i+1]==0 && data[i+2]==0 && data[i+3]==1) {
-                starts.add(i);
+        List<byte[]> nalUnits = new ArrayList<>();
+        int i = 0;
+        while (i < data.length) {
+            int nextStart = -1;
+            for (int j = i + 3; j < data.length - 3; j++) {
+                if (data[j] == 0x00 && data[j + 1] == 0x00) {
+                    if (data[j + 2] == 0x01 || (j + 3 < data.length && data[j + 2] == 0x00 && data[j + 3] == 0x01)) {
+                        nextStart = j;
+                        break;
+                    }
+                }
             }
-        }
-        List<byte[]> units = new ArrayList<>();
-        for (int i = 0; i < starts.size(); i++) {
-            int s = starts.get(i);
-            int e = (i + 1 < starts.size()) ? starts.get(i+1) : data.length;
-            int len = e - s;
-            byte[] unit = new byte[len];
-            System.arraycopy(data, s, unit, 0, len);
-            units.add(unit);
-        }
-        return units;
-    }
-    private static int findStartCode(byte[] data, int offset) {
-        for (int i = offset; i + 3 < data.length; i++) {
-            if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
-                return i;
-            } else if (i + 4 < data.length && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1) {
-                return i;
+            int end = (nextStart == -1) ? data.length : nextStart;
+            int startOffset = i;
+            if (i + 3 < data.length && data[i] == 0x00 && data[i + 1] == 0x00) {
+                if (data[i + 2] == 0x01) startOffset = i + 3;
+                else if (data[i + 2] == 0x00 && data[i + 3] == 0x01) startOffset = i + 4;
             }
-        }
-        return -1;
-    }
-
-    private static byte[][] extractSpsAndPps(List<byte[]> nals) {
-        byte[] sps = null, pps = null;
-        for (byte[] nal : nals) {
-            int headerOffset = (nal[2] == 1) ? 3 : 4;
-            int nalType = nal[headerOffset] & 0x1F;
-            if (nalType == 7) {
-                sps = nal;
-            } else if (nalType == 8) {
-                pps = nal;
+            if (startOffset < end) {
+                nalUnits.add(Arrays.copyOfRange(data, startOffset, end));
             }
-            if (sps != null && pps != null) break;
+            if (nextStart == -1) break;
+            i = nextStart;
         }
-        return new byte[][]{sps, pps};
+        return nalUnits;
     }
 }
