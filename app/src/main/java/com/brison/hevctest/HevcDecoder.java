@@ -1,10 +1,12 @@
 package com.brison.hevctest;
 
+import android.content.Context;
 import android.media.MediaCodec;
 import android.media.MediaFormat;
 import android.os.Build;
 import android.util.Log;
 
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -13,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class HevcDecoder {
+    private Context context;
     private static final String TAG = "HevcDecoder";
     private static final String MIME = "video/hevc";
     private static final long TIMEOUT_US = 10000;
@@ -23,6 +26,7 @@ public class HevcDecoder {
     public HevcDecoder(int width, int height) {
         this.width = width;
         this.height = height;
+        this.context = context;
     }
 
     /**
@@ -66,6 +70,13 @@ public class HevcDecoder {
         format.setByteBuffer("csd-0", ByteBuffer.wrap(vps));
         format.setByteBuffer("csd-1", ByteBuffer.wrap(sps));
         format.setByteBuffer("csd-2", ByteBuffer.wrap(pps));
+
+        // 出力ファイルの親ディレクトリが存在しない場合は作成する
+        File outputFile = new File(outputPath);
+        File parentDir = outputFile.getParentFile();
+        if (parentDir != null && !parentDir.exists()) {
+            parentDir.mkdirs();
+        }
 
         // 4) MediaCodec の初期化
         MediaCodec codec = MediaCodec.createDecoderByType(MIME);

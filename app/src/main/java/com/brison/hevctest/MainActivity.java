@@ -152,26 +152,39 @@ public class MainActivity extends AppCompatActivity {
     private void processAll() throws IOException {
         File dir = getFilesDir();
         Log.i(TAG, " processAll " + dir.getName());
-        for (File f : dir.listFiles()) {
-            String name = f.getName();
-            if (name.endsWith(".264") || name.endsWith(".bit")) {
-                String outPath = new File(dir, name + ".yuv").getAbsolutePath();
-                if (name.endsWith(".264") ) {
-                    try {
-                        H264DecodeTest.decodeRawBitstream(f.getAbsolutePath(), outPath);
-                        Log.i(TAG, name + " -> " + outPath + " 完了");
-                    } catch (IOException e) {
-                        Log.e(TAG, "decode error: " + name, e);
-                    }
-                }else if(name.endsWith(".bit")){
+        // 1. "result" フォルダを作成
+        File resultDir = new File(dir, "result");
+        if (!resultDir.exists()) {
+            resultDir.mkdirs();
+        }
 
-                    HevcDecoder decoder = new HevcDecoder(1920, 1080);
-                    decoder.decodeToYuv(f.getAbsolutePath(), outPath);
+        for (File f : dir.listFiles()) {
+            if (f.isDirectory()) {
+                continue; // resultフォルダ自体は処理対象外
+            }
+            String name = f.getName();
+            // H.264 (.264) ファイルの処理
+            if (name.endsWith(".264")) {
+                try {
+                    // H264DecodeTestには出力先ディレクトリのパスを渡す
+                    H264DecodeTest.decodeRawBitstream(f.getAbsolutePath(), resultDir.getAbsolutePath());
+                    Log.i(TAG, name + " -> " + new File(resultDir, f.getName() + ".yuv").getAbsolutePath() + " 完了");
+                } catch (IOException e) {
+                    Log.e(TAG, "decode error: " + name, e);
                 }
+            }
+            // HEVC (.bit) ファイルの処理
+            else if (name.endsWith(".bit")) {
+                // HevcDecoderには出力ファイルのフルパスを渡す
+                String outPath = new File(resultDir, name + ".yuv").getAbsolutePath();
+
+                HevcDecoder decoder = new HevcDecoder(1920, 1080);
+                decoder.decodeToYuv(f.getAbsolutePath(), outPath);
+                Log.i(TAG, name + " -> " + outPath + " 完了");
             } else {
-                Log.i(TAG, " NOT 264 FILE ");
+                Log.i(TAG, " NOT 264/bit FILE: " + name);
             }
         }
     }
-
 }
+
