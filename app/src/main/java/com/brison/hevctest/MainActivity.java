@@ -112,7 +112,13 @@ public class MainActivity extends AppCompatActivity {
 
         // --- Set Button Listeners ---
         buttonListLocalFiles.setOnClickListener(v -> listInternalFiles());
-        buttonStartDecord.setOnClickListener(v -> processAll());
+        buttonStartDecord.setOnClickListener(v -> {
+            try {
+                processAll();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
         // --- Initial Actions ---
         listInternalFiles(); // List local files on startup
         Log.d(TAG, "onCreate finished");
@@ -142,43 +148,30 @@ public class MainActivity extends AppCompatActivity {
         }
         return -1; // ビデオトラックが見つからない場合
     }
-    private void processAll() {
+
+    private void processAll() throws IOException {
         File dir = getFilesDir();
-        Log.i(TAG,   " processAll " + dir.getName() );
+        Log.i(TAG, " processAll " + dir.getName());
         for (File f : dir.listFiles()) {
             String name = f.getName();
             if (name.endsWith(".264") || name.endsWith(".bit")) {
                 String outPath = new File(dir, name + ".yuv").getAbsolutePath();
+                if (name.endsWith(".264") ) {
+                    try {
+                        H264DecodeTest.decodeRawBitstream(f.getAbsolutePath(), outPath);
+                        Log.i(TAG, name + " -> " + outPath + " 完了");
+                    } catch (IOException e) {
+                        Log.e(TAG, "decode error: " + name, e);
+                    }
+                }else if(name.endsWith(".bit")){
 
-                try {
-                    H264DecodeTest.decodeRawBitstream(f.getAbsolutePath(), outPath);
-                    Log.i(TAG, name + " -> " + outPath + " 完了");
-                } catch (IOException e) {
-                    Log.e(TAG, "decode error: " + name, e);
+                    HevcDecoder decoder = new HevcDecoder(1920, 1080);
+                    decoder.decodeToYuv(f.getAbsolutePath(), outPath);
                 }
-            }else{
-                Log.i(TAG,   " NOT 264 FILE " );
+            } else {
+                Log.i(TAG, " NOT 264 FILE ");
             }
         }
-    }
-    // ★ デコード処理を開始するメソッド
-
-
-
-    private int parsePort(String portStr) {
-        try {
-            int port = Integer.parseInt(portStr);
-            if (port > 0 && port <= 65535) {
-                return port;
-            }
-        } catch (NumberFormatException e) {
-            // Ignore
-        }
-        return -1; // Invalid port
-    }
-
-    private void showToast(final String message) {
-        mainHandler.post(() -> Toast.makeText(getApplicationContext(), message, Toast.LENGTH_SHORT).show());
     }
 
 }
