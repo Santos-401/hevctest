@@ -11,6 +11,8 @@ import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.ListView;
 import android.widget.Toast;
+import android.widget.ProgressBar; // ★インポート追加
+import android.view.View; // ★インポート追加
 
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -31,6 +33,7 @@ public class MainActivity extends AppCompatActivity {
     private ArrayAdapter<String> localFileListAdapter; // ★ 名前変更
     private List<File> internalFiles;
     private Button buttonStartDecord;
+    private ProgressBar progressBar; // ★ ProgressBarのメンバー変数を追加
 
 
     // 内部ストレージのファイル一覧を取得・表示
@@ -98,6 +101,7 @@ public class MainActivity extends AppCompatActivity {
         buttonListLocalFiles = findViewById(R.id.buttonListLocalFiles);
         listViewLocalFiles = findViewById(R.id.listViewLocalFiles);
         buttonStartDecord = findViewById(R.id.startButton);
+        progressBar = findViewById(R.id.progressBar); // ★ ProgressBarを初期化
 
 
         // --- Initialize Executor and Handler ---
@@ -113,17 +117,44 @@ public class MainActivity extends AppCompatActivity {
         // --- Set Button Listeners ---
         buttonListLocalFiles.setOnClickListener(v -> listInternalFiles());
         buttonStartDecord.setOnClickListener(v -> {
-            try {
-                processAll();
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
+            // 処理中のUI状態に設定
+            setProcessingState(true);
+
+            // 重い処理をバックグラウンドスレッドで実行
+            executorService.execute(() -> {
+                try {
+                    processAll();
+                    // 成功をUIスレッドで通知
+                    mainHandler.post(() -> Toast.makeText(MainActivity.this, "処理が完了しました", Toast.LENGTH_SHORT).show());
+                } catch (IOException e) {
+                    Log.e(TAG, "デコード処理中にエラーが発生", e);
+                    // エラーをUIスレッドで通知
+                    mainHandler.post(() -> Toast.makeText(MainActivity.this, "エラーが発生しました", Toast.LENGTH_SHORT).show());
+                } finally {
+                    // 処理完了後、UIの状態を元に戻す (必ずUIスレッドで実行)
+                    mainHandler.post(() -> setProcessingState(false));
+                }
+            });
         });
         // --- Initial Actions ---
         listInternalFiles(); // List local files on startup
         Log.d(TAG, "onCreate finished");
     }
-
+    /** ★★★ 新規追加 ★★★
+     * 処理中/待機中のUI状態を切り替えるメソッド
+     * @param isProcessing trueの場合、プログレスバーを表示しボタンを無効化
+     */
+    private void setProcessingState(boolean isProcessing) {
+        if (isProcessing) {
+            progressBar.setVisibility(View.VISIBLE);
+            buttonListLocalFiles.setEnabled(false);
+            buttonStartDecord.setEnabled(false);
+        } else {
+            progressBar.setVisibility(View.GONE);
+            buttonListLocalFiles.setEnabled(true);
+            buttonStartDecord.setEnabled(true);
+        }
+    }
 
     @Override
     protected void onDestroy() { // ★ スレッド停止処理を追加
