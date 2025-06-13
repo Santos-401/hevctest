@@ -5,6 +5,8 @@ import android.media.MediaCodec;
 import android.media.MediaFormat;
 import android.os.Build;
 import android.util.Log;
+// Pair import might not be needed anymore if HEVCResolutionExtractor.SPSInfo is fully used
+// import android.util.Pair;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -20,13 +22,8 @@ public class HevcDecoder {
     private static final String MIME = "video/hevc";
     private static final long TIMEOUT_US = 10000;
 
-    private final int width;
-    private final int height;
-
-    public HevcDecoder(int width, int height) {
-        this.width = width;
-        this.height = height;
-        this.context = context;
+    public HevcDecoder() {
+        // this.context = context;
     }
 
     /**
@@ -42,12 +39,17 @@ public class HevcDecoder {
             fis.read(data);
         }
 
-        // 2) Annex-B スタートコード込みで NAL 単位に分割
+        HEVCResolutionExtractor.SPSInfo spsInfo = HEVCResolutionExtractor.extractSPSInfo(data);
+        if (spsInfo == null || spsInfo.width <= 0 || spsInfo.height <= 0) {
+            throw new IOException("Could not extract valid SPS info (including resolution) from HEVC file.");
+        }
+        int actualWidth = spsInfo.width;
+        int actualHeight = spsInfo.height;
+
         List<byte[]> nalUnits = splitAnnexB(data);
         Log.i(TAG, "NAL count: " + nalUnits.size());
 
-        // 3) VPS/SPS/PPS を抽出して MediaFormat にセット
-        byte[] vps = null, sps = null, pps = null;
+        byte[] vps = null, spsByteArr = null, pps = null; // Renamed 'sps' to 'spsByteArr' to avoid conflict with spsInfo
         for (byte[] nal : nalUnits) {
             int offset = 0;
             if (nal.length > 4 && nal[0]==0 && nal[1]==0 && nal[2]==0 && nal[3]==1) {
@@ -55,83 +57,127 @@ public class HevcDecoder {
             } else if (nal.length > 3 && nal[0]==0 && nal[1]==0 && nal[2]==1) {
                 offset = 3;
             }
+            // Ensure there's data after the start code prefix
+            if (nal.length <= offset) {
+                Log.w(TAG, "Skipping NAL unit with insufficient length after start code.");
+                continue;
+            }
             int header = nal[offset] & 0xFF;
-            int type = (header & 0x7E) >> 1;  // HEVC NALU type: bits1-6
+            int type = (header & 0x7E) >> 1;
             if (type == 32) vps = nal;
-            else if (type == 33) sps = nal;
+            else if (type == 33) spsByteArr = nal;
             else if (type == 34) pps = nal;
-            if (vps != null && sps != null && pps != null) break;
+            if (vps != null && spsByteArr != null && pps != null) break;
         }
-        if (vps == null || sps == null || pps == null) {
+        if (vps == null || spsByteArr == null || pps == null) {
             throw new IOException("Missing VPS/SPS/PPS in bitstream");
         }
 
-        MediaFormat format = MediaFormat.createVideoFormat(MIME, width, height);
+        MediaFormat format = MediaFormat.createVideoFormat(MIME, actualWidth, actualHeight);
+        format.setInteger(MediaFormat.KEY_PROFILE, spsInfo.profileIdc);
+        format.setInteger(MediaFormat.KEY_LEVEL, spsInfo.levelIdc);
+
         format.setByteBuffer("csd-0", ByteBuffer.wrap(vps));
-        format.setByteBuffer("csd-1", ByteBuffer.wrap(sps));
+        format.setByteBuffer("csd-1", ByteBuffer.wrap(spsByteArr)); // Use spsByteArr
         format.setByteBuffer("csd-2", ByteBuffer.wrap(pps));
 
-        // 出力ファイルの親ディレクトリが存在しない場合は作成する
         File outputFile = new File(outputPath);
         File parentDir = outputFile.getParentFile();
         if (parentDir != null && !parentDir.exists()) {
             parentDir.mkdirs();
         }
 
-        // 4) MediaCodec の初期化
         MediaCodec codec = MediaCodec.createDecoderByType(MIME);
         codec.configure(format, null, null, 0);
         codec.start();
 
-        // 5) YUV 出力先ファイル
         try (FileOutputStream fos = new FileOutputStream(outputPath)) {
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-            int frameCount = 0;
+            boolean inputEOS = false;
+            boolean outputEOS = false;
+            int nalUnitIndex = 0;
+            long frameCountForPTS = 0;
 
-            // 入力ループ
-            for (byte[] nal : nalUnits) {
-                int inIndex = codec.dequeueInputBuffer(TIMEOUT_US);
-                if (inIndex >= 0) {
-                    ByteBuffer ib = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP)
-                            ? codec.getInputBuffer(inIndex)
-                            : ByteBuffer.wrap(codec.getInputBuffers()[inIndex].array());
-                    ib.clear();
-                    ib.put(nal);
-                    long pts = frameCount * 1000000L / 30; // 30fps 想定
-                    codec.queueInputBuffer(inIndex, 0, nal.length, pts, 0);
-                    frameCount++;
-                }
-
-                int outIndex = codec.dequeueOutputBuffer(info, TIMEOUT_US);
-                while (outIndex >= 0) {
-                    ByteBuffer ob = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP)
-                            ? codec.getOutputBuffer(outIndex)
-                            : ByteBuffer.wrap(codec.getOutputBuffers()[outIndex].array());
-                    if (ob != null && info.size > 0) {
-                        byte[] yuv = new byte[info.size];
-                        ob.get(yuv);
-                        fos.write(yuv);
+            while (!outputEOS) {
+                // Input Handling
+                if (!inputEOS) {
+                    int inIndex = codec.dequeueInputBuffer(TIMEOUT_US);
+                    if (inIndex >= 0) {
+                        if (nalUnitIndex < nalUnits.size()) {
+                            byte[] nal = nalUnits.get(nalUnitIndex++);
+                            ByteBuffer ib = codec.getInputBuffer(inIndex); // Use the new API
+                            if (ib != null) { // Check if buffer is not null
+                                ib.clear();
+                                ib.put(nal);
+                                long pts = frameCountForPTS * 1000000L / 30; // Assuming 30fps for PTS
+                                codec.queueInputBuffer(inIndex, 0, nal.length, pts, 0);
+                                frameCountForPTS++;
+                            } else {
+                                Log.e(TAG, "getInputBuffer returned null for index " + inIndex);
+                                // Potentially handle error or skip
+                            }
+                        } else {
+                            Log.i(TAG, "All NAL units queued, sending EOS to input.");
+                            codec.queueInputBuffer(inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                            inputEOS = true;
+                        }
+                    } else {
+                         Log.d(TAG, "Input buffer not available or timed out.");
                     }
-                    codec.releaseOutputBuffer(outIndex, false);
-                    outIndex = codec.dequeueOutputBuffer(info, TIMEOUT_US);
                 }
-            }
 
-            // 6) EOS を送信
-            int inIndex = codec.dequeueInputBuffer(TIMEOUT_US);
-            if (inIndex >= 0) {
-                codec.queueInputBuffer(inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
-            }
-            // 残りの出力を取り出し
-            int outIndex = codec.dequeueOutputBuffer(new MediaCodec.BufferInfo(), TIMEOUT_US);
-            while (outIndex >= 0) {
-                codec.releaseOutputBuffer(outIndex, false);
-                outIndex = codec.dequeueOutputBuffer(new MediaCodec.BufferInfo(), TIMEOUT_US);
-            }
+                // Output Handling
+                int outIndex = codec.dequeueOutputBuffer(info, TIMEOUT_US);
+                switch (outIndex) {
+                    case MediaCodec.INFO_OUTPUT_FORMAT_CHANGED:
+                        Log.i(TAG, "Output format changed. New format: " + codec.getOutputFormat());
+                        break;
+                    case MediaCodec.INFO_TRY_AGAIN_LATER:
+                        Log.d(TAG, "dequeueOutputBuffer timed out (INFO_TRY_AGAIN_LATER).");
+                        break;
+                    case MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED:
+                        // This case is deprecated and should not be relied upon.
+                        // Input and output buffers are available via getInputBuffer and getOutputBuffer.
+                        Log.d(TAG, "Output buffers changed (deprecated behavior).");
+                        break;
+                    default: // outIndex >= 0, indicates a valid output buffer
+                        if (outIndex < 0) {
+                            // This should ideally not happen if INFO_TRY_AGAIN_LATER is handled.
+                            Log.w(TAG, "dequeueOutputBuffer returned unexpected negative index: " + outIndex);
+                            break;
+                        }
+
+                        if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                            Log.d(TAG, "Skipping codec config buffer.");
+                            codec.releaseOutputBuffer(outIndex, false);
+                            break;
+                        }
+
+                        ByteBuffer ob = codec.getOutputBuffer(outIndex); // Use new API
+                        if (ob != null && info.size > 0) {
+                            byte[] yuv = new byte[info.size];
+                            ob.get(yuv);
+                            fos.write(yuv);
+                            Log.d(TAG, "Wrote " + info.size + " bytes of YUV data, pts: " + info.presentationTimeUs);
+                        } else if (ob == null) {
+                            Log.w(TAG, "Output buffer was null for index " + outIndex);
+                        }
+
+                        codec.releaseOutputBuffer(outIndex, false);
+
+                        if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                            Log.i(TAG, "Output EOS reached.");
+                            outputEOS = true;
+                        }
+                        break;
+                } // End of switch
+            } // End of while (!outputEOS)
+
         } finally {
             // 7) クリーンアップ
             codec.stop();
             codec.release();
+            // fos is closed by try-with-resources
         }
     }
 
@@ -151,9 +197,9 @@ public class HevcDecoder {
                     start = i; prefix = 3; break;
                 }
             }
-            if (start < 0) break;
+            if (start < 0) break; // No more start codes found
             int next = -1;
-            for (int i = start + prefix; i + 3 < len; i++) {
+            for (int i = start + prefix; i + 3 < len; i++) { // Search for the next start code
                 if ((data[i]==0 && data[i+1]==0 && data[i+2]==0 && data[i+3]==1)
                         || (data[i]==0 && data[i+1]==0 && data[i+2]==1)) {
                     next = i; break;

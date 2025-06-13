@@ -209,7 +209,7 @@ public class MainActivity extends AppCompatActivity {
                 // HevcDecoderには出力ファイルのフルパスを渡す
                 String outPath = new File(resultDir, name + ".yuv").getAbsolutePath();
 
-                HevcDecoder decoder = new HevcDecoder(1920, 1080);
+                HevcDecoder decoder = new HevcDecoder();
                 decoder.decodeToYuv(f.getAbsolutePath(), outPath);
                 Log.i(TAG, name + " -> " + outPath + " 完了");
             } else {
