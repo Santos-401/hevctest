@@ -2,12 +2,10 @@ package com.brison.hevctest;
 
 import android.content.Context;
 import android.media.MediaCodec;
-import android.media.MediaCodecInfo; // Re-add this import for Profile/Level constants
+import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
 import android.os.Build;
 import android.util.Log;
-// Pair import might not be needed anymore if HEVCResolutionExtractor.SPSInfo is fully used
-// import android.util.Pair;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -27,11 +25,6 @@ public class HevcDecoder {
         // this.context = context;
     }
 
-    /**
-     * Annex-B 形式の HEVC ビットストリームをデコードし、YUV ファイルとして出力する
-     * @param inputPath  raw Annex-B *.bit ファイルのパス
-     * @param outputPath 出力先 YUV ファイルのパス
-     */
     public void decodeToYuv(String inputPath, String outputPath) throws IOException {
         byte[] data;
         try (FileInputStream fis = new FileInputStream(inputPath)) {
@@ -72,143 +65,157 @@ public class HevcDecoder {
             throw new IOException("Missing VPS/SPS/PPS in bitstream");
         }
 
-        MediaFormat format = MediaFormat.createVideoFormat(MIME, actualWidth, actualHeight);
-
-        // Set CSD buffers first
-        format.setByteBuffer("csd-0", ByteBuffer.wrap(vps));
-        format.setByteBuffer("csd-1", ByteBuffer.wrap(spsByteArr));
-        format.setByteBuffer("csd-2", ByteBuffer.wrap(pps));
-
-        // Map and set Profile
-        int profileIdc = spsInfo.profileIdc;
-        int androidProfile = -1;
-        switch (profileIdc) {
-            case 1: // Main profile
-                androidProfile = MediaCodecInfo.CodecProfileLevel.HEVCProfileMain;
-                break;
-            case 2: // Main10 profile
-                androidProfile = MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10;
-                break;
-            default:
-                Log.w(TAG, "Unmapped HEVC profile_idc: " + profileIdc + " for KEY_PROFILE");
-                break;
-        }
-        if (androidProfile != -1) {
-            format.setInteger(MediaFormat.KEY_PROFILE, androidProfile);
-            Log.i(TAG, "Set KEY_PROFILE to " + androidProfile + " (from profile_idc " + profileIdc + ")");
-        }
-
-        // Map and set Level (simplified Main Tier mapping)
-        int levelIdc = spsInfo.levelIdc;
-        int androidLevel = -1;
-        if (levelIdc <= 30) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel1;
-        else if (levelIdc <= 60) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel2;
-        else if (levelIdc <= 63) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel21;
-        else if (levelIdc <= 90) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel3;
-        else if (levelIdc <= 93) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel31;
-        else if (levelIdc <= 120) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel4;
-        else if (levelIdc <= 123) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel41;
-        else if (levelIdc <= 150) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel5;
-        else if (levelIdc <= 153) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel51;
-        else if (levelIdc <= 156) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel52;
-        else if (levelIdc <= 180) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel6;
-        else if (levelIdc <= 183) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel61;
-        else if (levelIdc <= 186) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel62;
-        else { Log.w(TAG, "Unmapped HEVC level_idc: " + levelIdc + " for KEY_LEVEL"); }
-
-        if (androidLevel != -1) {
-            format.setInteger(MediaFormat.KEY_LEVEL, androidLevel);
-            Log.i(TAG, "Set KEY_LEVEL to " + androidLevel + " (from level_idc " + levelIdc + ")");
-        }
-
-        // NO explicit KEY_COLOR_FORMAT setting.
-        Log.i(TAG, "Final MediaFormat configuration: CSDs, Width, Height, Mapped Profile & Level. No explicit ColorFormat. SPS ChromaFormatIDC: " + spsInfo.chromaFormatIdc);
-
         File outputFile = new File(outputPath);
         File parentDir = outputFile.getParentFile();
         if (parentDir != null && !parentDir.exists()) {
-            parentDir.mkdirs();
+            if (!parentDir.mkdirs()) {
+                Log.w(TAG, "Failed to create output parent directory: " + parentDir.getAbsolutePath());
+                // Depending on strictness, could throw IOException here
+            }
         }
 
-        MediaCodec codec = MediaCodec.createDecoderByType(MIME);
-        codec.configure(format, null, null, 0);
-        codec.start();
+        MediaCodec codec = null;
+        try (FileOutputStream fos = new FileOutputStream(outputFile)) { // Use outputFile directly
+            MediaFormat format = MediaFormat.createVideoFormat(MIME, actualWidth, actualHeight);
+            format.setByteBuffer("csd-0", ByteBuffer.wrap(vps));
+            format.setByteBuffer("csd-1", ByteBuffer.wrap(spsByteArr));
+            format.setByteBuffer("csd-2", ByteBuffer.wrap(pps));
 
-        try (FileOutputStream fos = new FileOutputStream(outputPath)) {
-            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-            boolean inputEOS = false;
-            boolean outputEOS = false;
-            int nalUnitIndex = 0;
-            long frameCountForPTS = 0;
+            int profileIdc = spsInfo.profileIdc;
+            int androidProfile = -1;
+            switch (profileIdc) {
+                case 1: androidProfile = MediaCodecInfo.CodecProfileLevel.HEVCProfileMain; break;
+                case 2: androidProfile = MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10; break;
+                default: Log.w(TAG, "Unmapped HEVC profile_idc: " + profileIdc + " for KEY_PROFILE"); break;
+            }
+            if (androidProfile != -1) {
+                format.setInteger(MediaFormat.KEY_PROFILE, androidProfile);
+                Log.i(TAG, "Set KEY_PROFILE to " + androidProfile + " (from profile_idc " + profileIdc + ")");
+            }
 
-            while (!outputEOS) {
-                if (!inputEOS) {
-                    int inIndex = codec.dequeueInputBuffer(TIMEOUT_US);
-                    if (inIndex >= 0) {
-                        if (nalUnitIndex < nalUnits.size()) {
-                            byte[] nal = nalUnits.get(nalUnitIndex++);
-                            ByteBuffer ib = codec.getInputBuffer(inIndex);
-                            if (ib != null) {
-                                ib.clear();
-                                ib.put(nal);
-                                long pts = frameCountForPTS * 1000000L / 30;
-                                codec.queueInputBuffer(inIndex, 0, nal.length, pts, 0);
-                                frameCountForPTS++;
+            int levelIdc = spsInfo.levelIdc;
+            int androidLevel = -1;
+            if (levelIdc <= 30) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel1;
+            else if (levelIdc <= 60) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel2;
+            else if (levelIdc <= 63) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel21;
+            else if (levelIdc <= 90) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel3;
+            else if (levelIdc <= 93) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel31;
+            else if (levelIdc <= 120) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel4;
+            else if (levelIdc <= 123) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel41;
+            else if (levelIdc <= 150) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel5;
+            else if (levelIdc <= 153) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel51;
+            else if (levelIdc <= 156) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel52;
+            else if (levelIdc <= 180) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel6;
+            else if (levelIdc <= 183) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel61;
+            else if (levelIdc <= 186) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel62;
+            else { Log.w(TAG, "Unmapped HEVC level_idc: " + levelIdc + " for KEY_LEVEL"); }
+            if (androidLevel != -1) {
+                format.setInteger(MediaFormat.KEY_LEVEL, androidLevel);
+                Log.i(TAG, "Set KEY_LEVEL to " + androidLevel + " (from level_idc " + levelIdc + ")");
+            }
+
+            Log.i(TAG, "Final MediaFormat configuration: CSDs, Width, Height, Mapped Profile & Level. No explicit ColorFormat. SPS ChromaFormatIDC: " + spsInfo.chromaFormatIdc);
+            Log.d(TAG, "MediaFormat: " + format.toString());
+
+
+            try {
+                codec = MediaCodec.createDecoderByType(MIME);
+                Log.i(TAG, "Configuring codec with format: " + format);
+                codec.configure(format, null, null, 0);
+                codec.start();
+
+                MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+                boolean inputEOS = false;
+                boolean outputEOS = false;
+                int nalUnitIndex = 0;
+                long frameCountForPTS = 0;
+
+                while (!outputEOS) {
+                    if (!inputEOS) {
+                        int inIndex = codec.dequeueInputBuffer(TIMEOUT_US);
+                        if (inIndex >= 0) {
+                            if (nalUnitIndex < nalUnits.size()) {
+                                byte[] nal = nalUnits.get(nalUnitIndex++);
+                                ByteBuffer ib = codec.getInputBuffer(inIndex);
+                                if (ib != null) {
+                                    ib.clear();
+                                    ib.put(nal);
+                                    long pts = frameCountForPTS * 1000000L / 30;
+                                    codec.queueInputBuffer(inIndex, 0, nal.length, pts, 0);
+                                    frameCountForPTS++;
+                                } else {
+                                    Log.e(TAG, "getInputBuffer returned null for index " + inIndex);
+                                }
                             } else {
-                                Log.e(TAG, "getInputBuffer returned null for index " + inIndex);
+                                Log.i(TAG, "All NAL units queued, sending EOS to input.");
+                                codec.queueInputBuffer(inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                                inputEOS = true;
                             }
                         } else {
-                            Log.i(TAG, "All NAL units queued, sending EOS to input.");
-                            codec.queueInputBuffer(inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
-                            inputEOS = true;
+                             Log.d(TAG, "Input buffer not available or timed out during NAL unit processing.");
                         }
-                    } else {
-                         Log.d(TAG, "Input buffer not available or timed out.");
+                    }
+
+                    int outIndex = codec.dequeueOutputBuffer(info, TIMEOUT_US);
+                    switch (outIndex) {
+                        case MediaCodec.INFO_OUTPUT_FORMAT_CHANGED:
+                            Log.i(TAG, "Output format changed. New format: " + codec.getOutputFormat());
+                            break;
+                        case MediaCodec.INFO_TRY_AGAIN_LATER:
+                            Log.d(TAG, "dequeueOutputBuffer timed out (INFO_TRY_AGAIN_LATER).");
+                            break;
+                        case MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED:
+                            Log.d(TAG, "Output buffers changed (deprecated behavior).");
+                            break;
+                        default:
+                            if (outIndex < 0) {
+                                Log.w(TAG, "dequeueOutputBuffer returned unexpected negative index: " + outIndex);
+                                break;
+                            }
+                            if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                                Log.d(TAG, "Skipping codec config buffer.");
+                                codec.releaseOutputBuffer(outIndex, false);
+                                break;
+                            }
+                            ByteBuffer ob = codec.getOutputBuffer(outIndex);
+                            if (ob != null && info.size > 0) {
+                                byte[] yuv = new byte[info.size];
+                                ob.get(yuv);
+                                fos.write(yuv);
+                                Log.d(TAG, "Wrote " + info.size + " bytes of YUV data, pts: " + info.presentationTimeUs);
+                            } else if (ob == null && info.size > 0) { // Check if ob is null but size > 0
+                                Log.w(TAG, "Output buffer was null for index " + outIndex + " but info.size was " + info.size);
+                            }
+                            codec.releaseOutputBuffer(outIndex, false);
+                            if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                                Log.i(TAG, "Output EOS reached.");
+                                outputEOS = true;
+                            }
+                            break;
                     }
                 }
-
-                int outIndex = codec.dequeueOutputBuffer(info, TIMEOUT_US);
-                switch (outIndex) {
-                    case MediaCodec.INFO_OUTPUT_FORMAT_CHANGED:
-                        Log.i(TAG, "Output format changed. New format: " + codec.getOutputFormat());
-                        break;
-                    case MediaCodec.INFO_TRY_AGAIN_LATER:
-                        Log.d(TAG, "dequeueOutputBuffer timed out (INFO_TRY_AGAIN_LATER).");
-                        break;
-                    case MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED:
-                        Log.d(TAG, "Output buffers changed (deprecated behavior).");
-                        break;
-                    default:
-                        if (outIndex < 0) {
-                            Log.w(TAG, "dequeueOutputBuffer returned unexpected negative index: " + outIndex);
-                            break;
-                        }
-                        if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
-                            Log.d(TAG, "Skipping codec config buffer.");
-                            codec.releaseOutputBuffer(outIndex, false);
-                            break;
-                        }
-                        ByteBuffer ob = codec.getOutputBuffer(outIndex);
-                        if (ob != null && info.size > 0) {
-                            byte[] yuv = new byte[info.size];
-                            ob.get(yuv);
-                            fos.write(yuv);
-                            Log.d(TAG, "Wrote " + info.size + " bytes of YUV data, pts: " + info.presentationTimeUs);
-                        } else if (ob == null) {
-                            Log.w(TAG, "Output buffer was null for index " + outIndex);
-                        }
-                        codec.releaseOutputBuffer(outIndex, false);
-                        if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                            Log.i(TAG, "Output EOS reached.");
-                            outputEOS = true;
-                        }
-                        break;
+            } catch (IllegalArgumentException e) {
+                Log.e(TAG, "MediaCodec IllegalArgumentException: " + e.getMessage(), e);
+                throw new IOException("MediaCodec configuration/operation failed (IllegalArgumentException): " + e.getMessage(), e);
+            } catch (MediaCodec.CodecException e) {
+                Log.e(TAG, "MediaCodec CodecException: " + e.getMessage() + ", DiagnosticInfo: " + e.getDiagnosticInfo(), e);
+                throw new IOException("MediaCodec operation failed (CodecException): " + e.getMessage(), e);
+            } catch (IllegalStateException e) {
+                Log.e(TAG, "MediaCodec IllegalStateException: " + e.getMessage(), e);
+                throw new IOException("MediaCodec operation failed (IllegalStateException): " + e.getMessage(), e);
+            } finally {
+                if (codec != null) {
+                    try {
+                        codec.stop();
+                        Log.d(TAG, "MediaCodec stopped.");
+                    } catch (IllegalStateException e) {
+                        Log.e(TAG, "IllegalStateException on codec.stop() - may already be stopped or in error state.", e);
+                    }
+                    codec.release();
+                    Log.d(TAG, "MediaCodec released.");
                 }
             }
-        } finally {
-            codec.stop();
-            codec.release();
-        }
+        } // fos is closed automatically by try-with-resources
     }
 
     private List<byte[]> splitAnnexB(byte[] data) {
