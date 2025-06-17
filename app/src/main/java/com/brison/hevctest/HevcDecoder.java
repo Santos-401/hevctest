@@ -2,6 +2,7 @@ package com.brison.hevctest;
 
 import android.content.Context;
 import android.media.MediaCodec;
+import android.media.MediaCodecInfo; // Re-add this import for Profile/Level constants
 import android.media.MediaFormat;
 import android.os.Build;
 import android.util.Log;
@@ -32,7 +33,6 @@ public class HevcDecoder {
      * @param outputPath 出力先 YUV ファイルのパス
      */
     public void decodeToYuv(String inputPath, String outputPath) throws IOException {
-        // 1) ビットストリーム全体を読み込む
         byte[] data;
         try (FileInputStream fis = new FileInputStream(inputPath)) {
             data = new byte[fis.available()];
@@ -49,7 +49,7 @@ public class HevcDecoder {
         List<byte[]> nalUnits = splitAnnexB(data);
         Log.i(TAG, "NAL count: " + nalUnits.size());
 
-        byte[] vps = null, spsByteArr = null, pps = null; // Renamed 'sps' to 'spsByteArr' to avoid conflict with spsInfo
+        byte[] vps = null, spsByteArr = null, pps = null;
         for (byte[] nal : nalUnits) {
             int offset = 0;
             if (nal.length > 4 && nal[0]==0 && nal[1]==0 && nal[2]==0 && nal[3]==1) {
@@ -57,7 +57,6 @@ public class HevcDecoder {
             } else if (nal.length > 3 && nal[0]==0 && nal[1]==0 && nal[2]==1) {
                 offset = 3;
             }
-            // Ensure there's data after the start code prefix
             if (nal.length <= offset) {
                 Log.w(TAG, "Skipping NAL unit with insufficient length after start code.");
                 continue;
@@ -74,12 +73,56 @@ public class HevcDecoder {
         }
 
         MediaFormat format = MediaFormat.createVideoFormat(MIME, actualWidth, actualHeight);
-        format.setInteger(MediaFormat.KEY_PROFILE, spsInfo.profileIdc);
-        format.setInteger(MediaFormat.KEY_LEVEL, spsInfo.levelIdc);
 
+        // Set CSD buffers first
         format.setByteBuffer("csd-0", ByteBuffer.wrap(vps));
-        format.setByteBuffer("csd-1", ByteBuffer.wrap(spsByteArr)); // Use spsByteArr
+        format.setByteBuffer("csd-1", ByteBuffer.wrap(spsByteArr));
         format.setByteBuffer("csd-2", ByteBuffer.wrap(pps));
+
+        // Map and set Profile
+        int profileIdc = spsInfo.profileIdc;
+        int androidProfile = -1;
+        switch (profileIdc) {
+            case 1: // Main profile
+                androidProfile = MediaCodecInfo.CodecProfileLevel.HEVCProfileMain;
+                break;
+            case 2: // Main10 profile
+                androidProfile = MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10;
+                break;
+            default:
+                Log.w(TAG, "Unmapped HEVC profile_idc: " + profileIdc + " for KEY_PROFILE");
+                break;
+        }
+        if (androidProfile != -1) {
+            format.setInteger(MediaFormat.KEY_PROFILE, androidProfile);
+            Log.i(TAG, "Set KEY_PROFILE to " + androidProfile + " (from profile_idc " + profileIdc + ")");
+        }
+
+        // Map and set Level (simplified Main Tier mapping)
+        int levelIdc = spsInfo.levelIdc;
+        int androidLevel = -1;
+        if (levelIdc <= 30) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel1;
+        else if (levelIdc <= 60) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel2;
+        else if (levelIdc <= 63) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel21;
+        else if (levelIdc <= 90) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel3;
+        else if (levelIdc <= 93) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel31;
+        else if (levelIdc <= 120) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel4;
+        else if (levelIdc <= 123) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel41;
+        else if (levelIdc <= 150) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel5;
+        else if (levelIdc <= 153) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel51;
+        else if (levelIdc <= 156) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel52;
+        else if (levelIdc <= 180) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel6;
+        else if (levelIdc <= 183) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel61;
+        else if (levelIdc <= 186) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel62;
+        else { Log.w(TAG, "Unmapped HEVC level_idc: " + levelIdc + " for KEY_LEVEL"); }
+
+        if (androidLevel != -1) {
+            format.setInteger(MediaFormat.KEY_LEVEL, androidLevel);
+            Log.i(TAG, "Set KEY_LEVEL to " + androidLevel + " (from level_idc " + levelIdc + ")");
+        }
+
+        // NO explicit KEY_COLOR_FORMAT setting.
+        Log.i(TAG, "Final MediaFormat configuration: CSDs, Width, Height, Mapped Profile & Level. No explicit ColorFormat. SPS ChromaFormatIDC: " + spsInfo.chromaFormatIdc);
 
         File outputFile = new File(outputPath);
         File parentDir = outputFile.getParentFile();
@@ -99,22 +142,20 @@ public class HevcDecoder {
             long frameCountForPTS = 0;
 
             while (!outputEOS) {
-                // Input Handling
                 if (!inputEOS) {
                     int inIndex = codec.dequeueInputBuffer(TIMEOUT_US);
                     if (inIndex >= 0) {
                         if (nalUnitIndex < nalUnits.size()) {
                             byte[] nal = nalUnits.get(nalUnitIndex++);
-                            ByteBuffer ib = codec.getInputBuffer(inIndex); // Use the new API
-                            if (ib != null) { // Check if buffer is not null
+                            ByteBuffer ib = codec.getInputBuffer(inIndex);
+                            if (ib != null) {
                                 ib.clear();
                                 ib.put(nal);
-                                long pts = frameCountForPTS * 1000000L / 30; // Assuming 30fps for PTS
+                                long pts = frameCountForPTS * 1000000L / 30;
                                 codec.queueInputBuffer(inIndex, 0, nal.length, pts, 0);
                                 frameCountForPTS++;
                             } else {
                                 Log.e(TAG, "getInputBuffer returned null for index " + inIndex);
-                                // Potentially handle error or skip
                             }
                         } else {
                             Log.i(TAG, "All NAL units queued, sending EOS to input.");
@@ -126,7 +167,6 @@ public class HevcDecoder {
                     }
                 }
 
-                // Output Handling
                 int outIndex = codec.dequeueOutputBuffer(info, TIMEOUT_US);
                 switch (outIndex) {
                     case MediaCodec.INFO_OUTPUT_FORMAT_CHANGED:
@@ -136,24 +176,19 @@ public class HevcDecoder {
                         Log.d(TAG, "dequeueOutputBuffer timed out (INFO_TRY_AGAIN_LATER).");
                         break;
                     case MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED:
-                        // This case is deprecated and should not be relied upon.
-                        // Input and output buffers are available via getInputBuffer and getOutputBuffer.
                         Log.d(TAG, "Output buffers changed (deprecated behavior).");
                         break;
-                    default: // outIndex >= 0, indicates a valid output buffer
+                    default:
                         if (outIndex < 0) {
-                            // This should ideally not happen if INFO_TRY_AGAIN_LATER is handled.
                             Log.w(TAG, "dequeueOutputBuffer returned unexpected negative index: " + outIndex);
                             break;
                         }
-
                         if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
                             Log.d(TAG, "Skipping codec config buffer.");
                             codec.releaseOutputBuffer(outIndex, false);
                             break;
                         }
-
-                        ByteBuffer ob = codec.getOutputBuffer(outIndex); // Use new API
+                        ByteBuffer ob = codec.getOutputBuffer(outIndex);
                         if (ob != null && info.size > 0) {
                             byte[] yuv = new byte[info.size];
                             ob.get(yuv);
@@ -162,29 +197,20 @@ public class HevcDecoder {
                         } else if (ob == null) {
                             Log.w(TAG, "Output buffer was null for index " + outIndex);
                         }
-
                         codec.releaseOutputBuffer(outIndex, false);
-
                         if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
                             Log.i(TAG, "Output EOS reached.");
                             outputEOS = true;
                         }
                         break;
-                } // End of switch
-            } // End of while (!outputEOS)
-
+                }
+            }
         } finally {
-            // 7) クリーンアップ
             codec.stop();
             codec.release();
-            // fos is closed by try-with-resources
         }
     }
 
-    /**
-     * Annex-B (0x000001 または 0x00000001) を含む
-     * NAL ユニットをスタートコード込みで切り出す
-     */
     private List<byte[]> splitAnnexB(byte[] data) {
         List<byte[]> list = new ArrayList<>();
         int len = data.length, offset = 0;
@@ -197,9 +223,9 @@ public class HevcDecoder {
                     start = i; prefix = 3; break;
                 }
             }
-            if (start < 0) break; // No more start codes found
+            if (start < 0) break;
             int next = -1;
-            for (int i = start + prefix; i + 3 < len; i++) { // Search for the next start code
+            for (int i = start + prefix; i + 3 < len; i++) {
                 if ((data[i]==0 && data[i+1]==0 && data[i+2]==0 && data[i+3]==1)
                         || (data[i]==0 && data[i+1]==0 && data[i+2]==1)) {
                     next = i; break;
