@@ -11,6 +11,8 @@ import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.ListView;
 import android.widget.Toast;
+import android.widget.ProgressBar; // ★インポート追加
+import android.view.View; // ★インポート追加
 
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -31,6 +33,7 @@ public class MainActivity extends AppCompatActivity {
     private ArrayAdapter<String> localFileListAdapter; // ★ 名前変更
     private List<File> internalFiles;
     private Button buttonStartDecord;
+    private ProgressBar progressBar; // ★ ProgressBarのメンバー変数を追加
 
 
     // 内部ストレージのファイル一覧を取得・表示
@@ -98,6 +101,7 @@ public class MainActivity extends AppCompatActivity {
         buttonListLocalFiles = findViewById(R.id.buttonListLocalFiles);
         listViewLocalFiles = findViewById(R.id.listViewLocalFiles);
         buttonStartDecord = findViewById(R.id.startButton);
+        progressBar = findViewById(R.id.progressBar); // ★ ProgressBarを初期化
 
 
         // --- Initialize Executor and Handler ---
@@ -112,12 +116,45 @@ public class MainActivity extends AppCompatActivity {
 
         // --- Set Button Listeners ---
         buttonListLocalFiles.setOnClickListener(v -> listInternalFiles());
-        buttonStartDecord.setOnClickListener(v -> processAll());
+        buttonStartDecord.setOnClickListener(v -> {
+            // 処理中のUI状態に設定
+            setProcessingState(true);
+
+            // 重い処理をバックグラウンドスレッドで実行
+            executorService.execute(() -> {
+                try {
+                    processAll();
+                    // 成功をUIスレッドで通知
+                    mainHandler.post(() -> Toast.makeText(MainActivity.this, "処理が完了しました", Toast.LENGTH_SHORT).show());
+                } catch (IOException e) {
+                    Log.e(TAG, "デコード処理中にエラーが発生", e);
+                    // エラーをUIスレッドで通知
+                    mainHandler.post(() -> Toast.makeText(MainActivity.this, "エラーが発生しました", Toast.LENGTH_SHORT).show());
+                } finally {
+                    // 処理完了後、UIの状態を元に戻す (必ずUIスレッドで実行)
+                    mainHandler.post(() -> setProcessingState(false));
+                }
+            });
+        });
         // --- Initial Actions ---
         listInternalFiles(); // List local files on startup
         Log.d(TAG, "onCreate finished");
     }
-
+    /** ★★★ 新規追加 ★★★
+     * 処理中/待機中のUI状態を切り替えるメソッド
+     * @param isProcessing trueの場合、プログレスバーを表示しボタンを無効化
+     */
+    private void setProcessingState(boolean isProcessing) {
+        if (isProcessing) {
+            progressBar.setVisibility(View.VISIBLE);
+            buttonListLocalFiles.setEnabled(false);
+            buttonStartDecord.setEnabled(false);
+        } else {
+            progressBar.setVisibility(View.GONE);
+            buttonListLocalFiles.setEnabled(true);
+            buttonStartDecord.setEnabled(true);
+        }
+    }
 
     @Override
     protected void onDestroy() { // ★ スレッド停止処理を追加
@@ -142,43 +179,43 @@ public class MainActivity extends AppCompatActivity {
         }
         return -1; // ビデオトラックが見つからない場合
     }
-    private void processAll() {
-        File dir = getFilesDir();
-        Log.i(TAG,   " processAll " + dir.getName() );
-        for (File f : dir.listFiles()) {
-            String name = f.getName();
-            if (name.endsWith(".264") || name.endsWith(".bit")) {
-                String outPath = new File(dir, name + ".yuv").getAbsolutePath();
 
+    private void processAll() throws IOException {
+        File dir = getFilesDir();
+        Log.i(TAG, " processAll " + dir.getName());
+        // 1. "result" フォルダを作成
+        File resultDir = new File(dir, "result");
+        if (!resultDir.exists()) {
+            resultDir.mkdirs();
+        }
+
+        for (File f : dir.listFiles()) {
+            if (f.isDirectory()) {
+                continue; // resultフォルダ自体は処理対象外
+            }
+            String name = f.getName();
+            // H.264 (.264) ファイルの処理
+            if (name.endsWith(".264") || name.endsWith(".h264")|| name.endsWith(".avc")|| name.endsWith(".jsv")|| name.endsWith(".jvt")) {
                 try {
-                    H264DecodeTest.decodeRawBitstream(f.getAbsolutePath(), outPath);
-                    Log.i(TAG, name + " -> " + outPath + " 完了");
+                    // H264DecodeTestには出力先ディレクトリのパスを渡す
+                    H264DecodeTest.decodeRawBitstream(f.getAbsolutePath(), resultDir.getAbsolutePath());
+                    Log.i(TAG, name + " -> " + new File(resultDir, f.getName() + ".yuv").getAbsolutePath() + " 完了");
                 } catch (IOException e) {
                     Log.e(TAG, "decode error: " + name, e);
                 }
-            }else{
-                Log.i(TAG,   " NOT 264 FILE " );
+            }
+            // HEVC (.bit) ファイルの処理
+            else if (name.endsWith(".bit")) {
+                // HevcDecoderには出力ファイルのフルパスを渡す
+                String outPath = new File(resultDir, name + ".yuv").getAbsolutePath();
+
+                HevcDecoder decoder = new HevcDecoder();
+                decoder.decodeToYuv(f.getAbsolutePath(), outPath);
+                Log.i(TAG, name + " -> " + outPath + " 完了");
+            } else {
+                Log.i(TAG, " NOT 264/bit FILE: " + name);
             }
         }
     }
-    // ★ デコード処理を開始するメソッド
-
-
-
-    private int parsePort(String portStr) {
-        try {
-            int port = Integer.parseInt(portStr);
-            if (port > 0 && port <= 65535) {
-                return port;
-            }
-        } catch (NumberFormatException e) {
-            // Ignore
-        }
-        return -1; // Invalid port
-    }
-
-    private void showToast(final String message) {
-        mainHandler.post(() -> Toast.makeText(getApplicationContext(), message, Toast.LENGTH_SHORT).show());
-    }
-
 }
+
