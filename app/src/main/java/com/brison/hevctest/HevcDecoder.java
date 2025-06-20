@@ -152,7 +152,7 @@ public class HevcDecoder {
                                 inputEOS = true;
                             }
                         } else {
-                             Log.d(TAG, "Input buffer not available or timed out during NAL unit processing.");
+                            Log.d(TAG, "Input buffer not available or timed out during NAL unit processing.");
                         }
                     }
 
