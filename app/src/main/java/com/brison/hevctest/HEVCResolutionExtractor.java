@@ -1,16 +1,17 @@
 package com.brison.hevctest;
 
+// Updated comment
 // HEVCResolutionExtractor.java
-// → 新規追加クラス。H.265 SPS（NAL unit type 33）の pic_width_in_luma_samples,
-//    pic_height_in_luma_samples をパースします。
-//    Enhanced to extract profile, level, and chroma format IDC.
+// Parses H.265 SPS to extract width, height, profile, level, tier, and chroma format IDC.
 
-import android.util.Pair; // Needed for parseProfileTierLevel's return type
+import android.util.Log;
+import android.util.Pair; // Retained if any internal methods might use it, though parseProfileTierLevel changed
 
 import java.io.ByteArrayOutputStream;
 import java.util.Arrays;
 
 public class HEVCResolutionExtractor {
+    private static final String TAG = "HEVCResExtractor";
 
     public static class SPSInfo {
         public final int width;
@@ -18,151 +19,217 @@ public class HEVCResolutionExtractor {
         public final int profileIdc;
         public final int levelIdc;
         public final int chromaFormatIdc;
-        // Consider adding bitDepthLuma, bitDepthChroma if needed later
+        public final boolean tierFlag; // true for High Tier, false for Main Tier
 
-        public SPSInfo(int width, int height, int profileIdc, int levelIdc, int chromaFormatIdc) {
+        public SPSInfo(int width, int height, int profileIdc, int levelIdc, int chromaFormatIdc, boolean tierFlag) {
             this.width = width;
             this.height = height;
             this.profileIdc = profileIdc;
             this.levelIdc = levelIdc;
             this.chromaFormatIdc = chromaFormatIdc;
+            this.tierFlag = tierFlag;
         }
+    }
+
+    private static class ProfileTierLevelInfo {
+        final int profileIdc;
+        final int levelIdc;
+        final boolean tierFlag;
+
+        ProfileTierLevelInfo(int profileIdc, int levelIdc, boolean tierFlag) {
+            this.profileIdc = profileIdc;
+            this.levelIdc = levelIdc;
+            this.tierFlag = tierFlag;
+        }
+    }
+
+    private static class NalUnitPosition {
+        final int offset;
+        final int startCodeLength;
+        NalUnitPosition(int offset, int startCodeLength) {
+            this.offset = offset;
+            this.startCodeLength = startCodeLength;
+        }
+    }
+
+    private static NalUnitPosition findNalUnitPos(byte[] data, byte nalTypeToFind) {
+        for (int i = 0; i + 2 < data.length; i++) {
+            if (data[i] == 0x00 && data[i+1] == 0x00) {
+                int nalUnitHeaderByteOffset = -1;
+                int currentStartCodeLength = 0;
+
+                if (data[i+2] == 0x01) {
+                    nalUnitHeaderByteOffset = i + 3;
+                    currentStartCodeLength = 3;
+                } else if (i + 3 < data.length && data[i+2] == 0x00 && data[i+3] == 0x01) {
+                    nalUnitHeaderByteOffset = i + 4;
+                    currentStartCodeLength = 4;
+                }
+
+                if (nalUnitHeaderByteOffset != -1 && nalUnitHeaderByteOffset < data.length) {
+                    int nalUnitHeaderByte1 = data[nalUnitHeaderByteOffset] & 0xFF;
+                    int currentNalType = (nalUnitHeaderByte1 >> 1) & 0x3F;
+                    if (currentNalType == nalTypeToFind) {
+                        return new NalUnitPosition(i, currentStartCodeLength);
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     public static SPSInfo extractSPSInfo(byte[] data) {
-        int offset = findNalUnit(data, (byte)33);  // nal_unit_type == 33 は SPS
-        if (offset < 0) return null;
-
-        // スタートコード（0x00000001）以降のバイト列を取り出し、エミュレーション防止バイト除去
-        // Skip NAL unit header (2 bytes: forbidden_zero_bit (1), nal_unit_type (6), nuh_layer_id (6), nuh_temporal_id_plus1 (3))
-        // The NAL unit header is 2 bytes for SPS.
-        byte[] sps = removeEmulationPreventionBytes(
-                Arrays.copyOfRange(data, offset + 4, data.length) // +4 for start code
-        );
-        BitReader br = new BitReader(sps);
-
-        // HEVC NAL ヘッダ（2 バイト）を読み飛ばし
-        br.readBits(16); // forbidden_zero_bit (1) + nal_unit_type (6) + nuh_layer_id (6) + nuh_temporal_id_plus1 (3)
-
-        // sps_video_parameter_set_id (4 bits)
-        br.readBits(4);
-        // sps_max_sub_layers_minus1 (3 bits)
-        int maxSubLayersMinus1 = br.readBits(3);
-        // sps_temporal_id_nesting_flag (1 bit)
-        br.readBit();
-
-        // profile_tier_level() をパースして IDC 値を取得
-        Pair<Integer, Integer> profileLevel = parseProfileTierLevel(br, maxSubLayersMinus1);
-        if (profileLevel == null) { // Should ideally not happen if PTL is mandatory and correctly parsed
+        NalUnitPosition spsPosition = findNalUnitPos(data, (byte)33);
+        if (spsPosition == null) {
+            Log.w(TAG, "SPS NAL unit (type 33) not found.");
             return null;
         }
-        int profileIdc = profileLevel.first;
-        int levelIdc = profileLevel.second;
 
-        // sps_seq_parameter_set_id (ue(v))
-        br.readUE();
+        int nalHeaderStartOffset = spsPosition.offset + spsPosition.startCodeLength;
+        int spsPayloadOffset = nalHeaderStartOffset + 2;
 
-        // chroma_format_idc (ue(v))
-        int chromaFormatIdc = (int) br.readUE();
+        if (spsPayloadOffset >= data.length) {
+            Log.w(TAG, "SPS payload offset is out of bounds or NAL unit is too short.");
+            return null;
+        }
+
+        int spsNalEndOffset = data.length;
+        int searchNextNalOffset = nalHeaderStartOffset + 2; // Start search after current NAL header
+
+        for (int j = searchNextNalOffset; j + 2 < data.length; j++) {
+            if (data[j] == 0x00 && data[j+1] == 0x00) {
+                if (data[j+2] == 0x01 || (j + 3 < data.length && data[j+2] == 0x00 && data[j+3] == 0x01)) {
+                    spsNalEndOffset = j;
+                    break;
+                }
+            }
+        }
+
+        if (spsPayloadOffset >= spsNalEndOffset) {
+             Log.w(TAG, "SPS payload appears empty or invalid end offset found (payload offset: " + spsPayloadOffset + ", end offset: " + spsNalEndOffset + ").");
+             return null;
+        }
+
+        byte[] spsRbsp = removeEmulationPreventionBytes(
+                Arrays.copyOfRange(data, spsPayloadOffset, spsNalEndOffset)
+        );
+
+        if (spsRbsp.length == 0) {
+            Log.w(TAG, "SPS RBSP is empty after extraction and emulation prevention byte removal.");
+            return null;
+        }
+        BitReader br = new BitReader(spsRbsp);
+
+        br.readBits(4);
+        int maxSubLayersMinus1 = br.readBits(3);
+        br.readBit();
+
+        ProfileTierLevelInfo ptlInfo = parseProfileTierLevel(br, maxSubLayersMinus1);
+        if (ptlInfo == null) {
+            Log.w(TAG, "Failed to parse ProfileTierLevel info from SPS.");
+            return null;
+        }
+        int profileIdc = ptlInfo.profileIdc;
+        int levelIdc = ptlInfo.levelIdc;
+        boolean tierFlag = ptlInfo.tierFlag;
+
+        readUE(br);
+
+        int chromaFormatIdc = (int) readUE(br);
         if (chromaFormatIdc == 3) {
-            br.readBit(); // separate_colour_plane_flag (1 bit)
+            br.readBit();
         }
 
-        // pic_width_in_luma_samples (ue(v))
-        int picWidth = (int) br.readUE();
-        // pic_height_in_luma_samples (ue(v))
-        int picHeight = (int) br.readUE();
+        int picWidth = (int) readUE(br);
+        int picHeight = (int) readUE(br);
 
-        // conformance_window_flag (1 bit)
-        if (br.readBit() == 1) { // If conformance_window_flag is 1
-            br.readUE();  // conf_win_left_offset (ue(v))
-            br.readUE();  // conf_win_right_offset (ue(v))
-            br.readUE();  // conf_win_top_offset (ue(v))
-            br.readUE();  // conf_win_bottom_offset (ue(v))
+        if (br.readBit() == 1) {
+            readUE(br);
+            readUE(br);
+            readUE(br);
+            readUE(br);
         }
 
-        // Other SPS fields like bit_depth_luma_minus8, bit_depth_chroma_minus8, etc.,
-        // can be parsed here if needed for SPSInfo. For now, focusing on requested fields.
-
-        return new SPSInfo(picWidth, picHeight, profileIdc, levelIdc, chromaFormatIdc);
+        return new SPSInfo(picWidth, picHeight, profileIdc, levelIdc, chromaFormatIdc, tierFlag);
     }
 
-    private static Pair<Integer, Integer> parseProfileTierLevel(BitReader br, int maxSubLayersMinus1) {
-        // general_profile_space (2 bits)
+    private static ProfileTierLevelInfo parseProfileTierLevel(BitReader br, int maxSubLayersMinus1) {
         br.readBits(2);
-        // general_tier_flag (1 bit)
-        br.readBit();
-        // general_profile_idc (5 bits)
-        int general_profile_idc = (int) br.readBits(5);
-        // general_profile_compatibility_flags (32 bits)
+        boolean general_tier_flag = (br.readBit() == 1);
+        int general_profile_idc = br.readBits(5);
         br.readBits(32);
-        // general_constraint_indicator_flags (48 bits) - previously referred to as general_progressive_source_flag etc.
-        br.readBits(48); // Corrected to 48 bits as per HEVC spec for these flags
-        // general_level_idc (8 bits)
-        int general_level_idc = (int) br.readBits(8);
+        br.readBits(48);
+        int general_level_idc = br.readBits(8);
 
-        // Arrays to store sub-layer presence flags
+        if (maxSubLayersMinus1 < 0 || maxSubLayersMinus1 > 6) { // Max 7 sublayers (0-6 for minus1)
+             // Invalid maxSubLayersMinus1, cannot proceed with sub-layer parsing.
+             // Log this or handle as an error. For now, proceed with general PTL info.
+             Log.w(TAG, "Invalid sps_max_sub_layers_minus1: " + maxSubLayersMinus1);
+             // Return general PTL, sub-layer parsing will be skipped or might error in BitReader
+             return new ProfileTierLevelInfo(general_profile_idc, general_level_idc, general_tier_flag);
+        }
+
         boolean[] sub_layer_profile_present_flag = new boolean[maxSubLayersMinus1];
         boolean[] sub_layer_level_present_flag = new boolean[maxSubLayersMinus1];
 
         for (int i = 0; i < maxSubLayersMinus1; i++) {
-            sub_layer_profile_present_flag[i] = (br.readBit() == 1); // u(1)
-            sub_layer_level_present_flag[i] = (br.readBit() == 1);   // u(1)
+            sub_layer_profile_present_flag[i] = (br.readBit() == 1);
+            sub_layer_level_present_flag[i] = (br.readBit() == 1);
         }
 
         if (maxSubLayersMinus1 > 0) {
             for (int i = maxSubLayersMinus1; i < 8; i++) {
-                br.readBits(2); // reserved_zero_2bits
+                br.readBits(2);
             }
         }
 
         for (int i = 0; i < maxSubLayersMinus1; i++) {
             if (sub_layer_profile_present_flag[i]) {
-                br.readBits(2);    // sub_layer_profile_space[i]
-                br.readBit();      // sub_layer_tier_flag[i]
-                br.readBits(5);    // sub_layer_profile_idc[i]
-                br.readBits(32);   // sub_layer_profile_compatibility_flag[i]
-                br.readBits(48);   // sub_layer_constraint_indicator_flags[i] (Corrected to 48 bits)
-                br.readBits(8);    // sub_layer_level_idc[i]
-            }
-            // If sub_layer_profile_present_flag[i] is 0, but sub_layer_level_present_flag[i] is 1,
-            // then only sub_layer_level_idc[i] is present for that sub-layer.
-            else if (sub_layer_level_present_flag[i]) {
-                br.readBits(8);    // sub_layer_level_idc[i]
+                br.readBits(2);
+                br.readBit();
+                br.readBits(5);
+                br.readBits(32);
+                br.readBits(48);
+                br.readBits(8);
+            } else if (sub_layer_level_present_flag[i]) {
+                br.readBits(8);
             }
         }
-        return new Pair<>(general_profile_idc, general_level_idc);
-    }
-
-    private static int findNalUnit(byte[] data, byte nalType) {
-        for (int i = 0; i + 4 < data.length; i++) {
-            if (data[i] == 0x00 && data[i+1] == 0x00 && data[i+2] == 0x00 && data[i+3] == 0x01) {
-                // Check NAL unit type from the NAL unit header (first byte after start code)
-                // NAL unit header: forbidden_zero_bit (1), nal_unit_type (6), nuh_layer_id (6), nuh_temporal_id_plus1 (3)
-                // We are interested in nal_unit_type which is bits 1-6 of the first byte of NAL unit header.
-                int nalUnitHeaderByte1 = data[i+4] & 0xFF;
-                int currentNalType = (nalUnitHeaderByte1 >> 1) & 0x3F; // Extract bits 1-6
-
-                if (currentNalType == nalType) {
-                    return i; // Return offset of start code
-                }
-            }
-        }
-        return -1;
+        return new ProfileTierLevelInfo(general_profile_idc, general_level_idc, general_tier_flag);
     }
 
     private static byte[] removeEmulationPreventionBytes(byte[] data) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         for (int i = 0; i < data.length; i++) {
-            // Check for 0x000003 pattern
             if (i + 2 < data.length && data[i] == 0x00 && data[i+1] == 0x00 && data[i+2] == 0x03) {
-                out.write(data[i]);   // Write 0x00
-                out.write(data[i+1]); // Write 0x00
-                i += 2; // Skip 0x03, next loop iteration will start after 0x03
+                out.write(data[i]);
+                out.write(data[i+1]);
+                i += 2;
             } else {
                 out.write(data[i]);
             }
         }
         return out.toByteArray();
+    }
+
+    private static long readUE(BitReader br) {
+        int zeros = 0;
+        while (br.readBit() == 0 && zeros < 32) {
+            zeros++;
+        }
+        if (zeros == 0) return 0;
+        if (zeros >= 32) {
+            Log.w(TAG, "Too many leading zeros in UE Golomb code (" + zeros + ")");
+            return Long.MAX_VALUE;
+        }
+        long valueSuffix;
+        try {
+            valueSuffix = br.readBits(zeros);
+        } catch (IllegalArgumentException e) { // BitReader might throw if trying to read too many bits
+            Log.e(TAG, "Error reading suffix for UE Golomb code, zeros: " + zeros, e);
+            return Long.MAX_VALUE;
+        }
+        long valueBase = (1L << zeros) - 1;
+        return valueBase + valueSuffix;
     }
 }

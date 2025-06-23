@@ -62,8 +62,33 @@ public class H264DecodeTest {
         // 4. MediaFormat作成
         MediaFormat format = MediaFormat.createVideoFormat(
                 MediaFormat.MIMETYPE_VIDEO_AVC, width, height);
-        format.setByteBuffer("csd-0", ByteBuffer.wrap(csd[0], 1, csd[0].length - 1));
-        format.setByteBuffer("csd-1", ByteBuffer.wrap(csd[1], 1, csd[1].length - 1));
+
+        byte[] spsData = csd[0];
+        byte[] ppsData = csd[1];
+
+        // Determine offset for SPS (csd[0])
+        int spsOffset = 0;
+        if (spsData.length > 4 && spsData[0] == 0 && spsData[1] == 0 && spsData[2] == 0 && spsData[3] == 1) {
+            spsOffset = 4;
+        } else if (spsData.length > 3 && spsData[0] == 0 && spsData[1] == 0 && spsData[2] == 1) {
+            spsOffset = 3;
+        } else {
+            throw new IOException("Invalid SPS start code format");
+        }
+        format.setByteBuffer("csd-0", ByteBuffer.wrap(spsData, spsOffset, spsData.length - spsOffset));
+        Log.d(TAG, "Set csd-0 with offset: " + spsOffset + ", length: " + (spsData.length - spsOffset));
+
+        // Determine offset for PPS (csd[1])
+        int ppsOffset = 0;
+        if (ppsData.length > 4 && ppsData[0] == 0 && ppsData[1] == 0 && ppsData[2] == 0 && ppsData[3] == 1) {
+            ppsOffset = 4;
+        } else if (ppsData.length > 3 && ppsData[0] == 0 && ppsData[1] == 0 && ppsData[2] == 1) {
+            ppsOffset = 3;
+        } else {
+            throw new IOException("Invalid PPS start code format");
+        }
+        format.setByteBuffer("csd-1", ByteBuffer.wrap(ppsData, ppsOffset, ppsData.length - ppsOffset));
+        Log.d(TAG, "Set csd-1 with offset: " + ppsOffset + ", length: " + (ppsData.length - ppsOffset));
 
         File outDir = new File(outputDirPath);
         if (!outDir.exists()) outDir.mkdirs();
@@ -91,52 +116,113 @@ public class H264DecodeTest {
             String codecName,
             File outputFile
     ) throws IOException {
-        MediaCodec decoder = MediaCodec.createByCodecName(codecName);
-        decoder.configure(format, null, null, 0);
-        decoder.start();
+        MediaCodec decoder = null;
+        AtomicInteger frameCount = new AtomicInteger(0);
 
-        try (FileOutputStream fos = new FileOutputStream(outputFile)) {
-            AtomicInteger frameCount = new AtomicInteger(0);
-            int nalIndex = 0;
-            long ptsUs = 0;
-            boolean outputDone = false;
-            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+        try {
+            decoder = MediaCodec.createByCodecName(codecName);
+            decoder.configure(format, null, null, 0);
+            decoder.start();
 
-            while (!outputDone) {
-                // 入力バッファ
-                int inIndex = decoder.dequeueInputBuffer(TIMEOUT_US);
-                if (inIndex >= 0 && nalIndex < nals.size()) {
-                    ByteBuffer inBuf = decoder.getInputBuffer(inIndex);
-                    inBuf.clear();
-                    byte[] nal = nals.get(nalIndex);
-                    inBuf.put(nal);
-                    int flags = (nalIndex == nals.size() - 1)
-                            ? MediaCodec.BUFFER_FLAG_END_OF_STREAM
-                            : 0;
-                    decoder.queueInputBuffer(inIndex, 0, nal.length, ptsUs, flags);
-                    ptsUs += 1000000L / 30;
-                    nalIndex++;
-                }
-                // 出力バッファ
-                int outIndex = decoder.dequeueOutputBuffer(info, TIMEOUT_US);
-                if (outIndex >= 0) {
-                    ByteBuffer outBuf = decoder.getOutputBuffer(outIndex);
-                    if (outBuf != null && info.size > 0) {
-                        byte[] yuv = new byte[info.size];
-                        outBuf.get(yuv);
-                        fos.write(yuv);
-                        frameCount.incrementAndGet();
+            try (FileOutputStream fos = new FileOutputStream(outputFile)) {
+                MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+                boolean inputEOS = false;
+                boolean outputEOS = false;
+                int nalUnitIdx = 0;
+                long presentationTimeUs = 0;
+
+                while (!outputEOS) {
+                    // Input Handling
+                    if (!inputEOS) {
+                        int inIndex = decoder.dequeueInputBuffer(TIMEOUT_US);
+                        if (inIndex >= 0) {
+                            if (nalUnitIdx < nals.size()) {
+                                byte[] nal = nals.get(nalUnitIdx);
+                                ByteBuffer ib = decoder.getInputBuffer(inIndex);
+                                if (ib != null) {
+                                    ib.clear();
+                                    ib.put(nal);
+                                    decoder.queueInputBuffer(inIndex, 0, nal.length, presentationTimeUs, 0);
+                                    presentationTimeUs += 1000000L / 30; // 30 FPS assumption
+                                } else {
+                                    Log.e(TAG, "H.264: getInputBuffer returned null for index " + inIndex);
+                                }
+                                nalUnitIdx++;
+                            } else { // All NALs have been queued
+                                Log.i(TAG, "H.264: All NALs sent, queuing EOS for input.");
+                                decoder.queueInputBuffer(inIndex, 0, 0, presentationTimeUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                                inputEOS = true;
+                            }
+                        } else {
+                            // Log.d(TAG, "H.264: Input buffer not available.");
+                        }
                     }
-                    decoder.releaseOutputBuffer(outIndex, false);
-                    if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                        outputDone = true;
+
+                    // Output Handling
+                    int outIndex = decoder.dequeueOutputBuffer(info, TIMEOUT_US);
+                    switch (outIndex) {
+                        case MediaCodec.INFO_OUTPUT_FORMAT_CHANGED:
+                            Log.i(TAG, "H.264: Output format changed to: " + decoder.getOutputFormat());
+                            break;
+                        case MediaCodec.INFO_TRY_AGAIN_LATER:
+                            // Log.d(TAG, "H.264: No output buffer available yet.");
+                            break;
+                        case MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED:
+                            Log.d(TAG, "H.264: Output buffers changed (deprecated).");
+                            break;
+                        default:
+                            if (outIndex < 0) {
+                                Log.w(TAG, "H.264: dequeueOutputBuffer returned an unexpected index: " + outIndex);
+                                break;
+                            }
+                            if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                                Log.d(TAG, "H.264: Skipping codec config buffer.");
+                                decoder.releaseOutputBuffer(outIndex, false);
+                                break;
+                            }
+                            ByteBuffer outBuf = decoder.getOutputBuffer(outIndex);
+                            if (outBuf != null && info.size > 0) {
+                                byte[] yuvData = new byte[info.size];
+                                outBuf.get(yuvData);
+                                fos.write(yuvData);
+                                frameCount.incrementAndGet();
+                            } else if (outBuf == null && info.size > 0){
+                                Log.w(TAG, "H.264: Output buffer was null for index " + outIndex + " but info.size was " + info.size);
+                            }
+                            decoder.releaseOutputBuffer(outIndex, false);
+
+                            if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                                Log.i(TAG, "H.264: Output EOS reached.");
+                                outputEOS = true;
+                            }
+                            break;
                     }
+                } // End of while(!outputEOS)
+            } // fos is closed here by try-with-resources
+        } catch (IllegalArgumentException e) {
+            Log.e(TAG, "H.264: MediaCodec configuration/operation failed (IllegalArgumentException): " + e.getMessage(), e);
+            throw new IOException("H.264: MediaCodec configuration/operation failed (IllegalArgumentException): " + e.getMessage(), e);
+        } catch (MediaCodec.CodecException e) {
+            Log.e(TAG, "H.264: MediaCodec operation failed (CodecException): " + e.getMessage() + ", DiagnosticInfo: " + e.getDiagnosticInfo(), e);
+            throw new IOException("H.264: MediaCodec operation failed (CodecException): " + e.getMessage(), e);
+        } catch (IllegalStateException e) {
+            Log.e(TAG, "H.264: MediaCodec operation failed (IllegalStateException): " + e.getMessage(), e);
+            throw new IOException("H.264: MediaCodec operation failed (IllegalStateException): " + e.getMessage(), e);
+        } catch (IOException e) { // To catch fos related IOExceptions
+            Log.e(TAG, "H.264: IOException during decoding: " + e.getMessage(), e);
+            throw e; // Re-throw original IOException
+        } finally {
+            if (decoder != null) {
+                try {
+                    decoder.stop();
+                } catch (IllegalStateException e) {
+                    Log.e(TAG, "H.264: IllegalStateException on codec.stop()", e);
                 }
+                decoder.release();
+                Log.d(TAG, "H.264: MediaCodec stopped and released.");
             }
-            decoder.stop();
-            decoder.release();
-            return frameCount.get();
         }
+        return frameCount.get();
     }
 
     // ——— ハードウェアデコーダのみ選ぶユーティリティ ———
@@ -175,33 +261,87 @@ public class H264DecodeTest {
         return MediaFormat.MIMETYPE_VIDEO_AVC;
     }
     private static List<byte[]> splitNalUnits(byte[] data) {
-        List<Integer> starts = new ArrayList<>();
-        for (int i = 0; i + 4 < data.length; i++) {
-            if (data[i]==0 && data[i+1]==0 && data[i+2]==0 && data[i+3]==1) {
-                starts.add(i);
+        List<byte[]> nalUnits = new ArrayList<>();
+        int len = data.length;
+        if (len == 0) {
+            return nalUnits;
+        }
+
+        int currentNalStart = -1;
+        int searchOffset = 0;
+
+        // Find the first NAL unit start
+        while (searchOffset + 2 < len) {
+            if (data[searchOffset] == 0x00 && data[searchOffset + 1] == 0x00) {
+                if (data[searchOffset + 2] == 0x01) { // 001
+                    currentNalStart = searchOffset;
+                    break;
+                } else if (searchOffset + 3 < len && data[searchOffset + 2] == 0x00 && data[searchOffset + 3] == 0x01) { // 0001
+                    currentNalStart = searchOffset;
+                    break;
+                }
             }
+            searchOffset++;
         }
-        List<byte[]> units = new ArrayList<>();
-        for (int i = 0; i < starts.size(); i++) {
-            int s = starts.get(i);
-            int e = (i + 1 < starts.size()) ? starts.get(i+1) : data.length;
-            int len = e - s;
-            byte[] unit = new byte[len];
-            System.arraycopy(data, s, unit, 0, len);
-            units.add(unit);
+
+        if (currentNalStart == -1) {
+            Log.w(TAG, "No NAL unit start codes found in H.264 data.");
+            return nalUnits;
         }
-        return units;
-    }
-    private static int findStartCode(byte[] data, int offset) {
-        for (int i = offset; i + 3 < data.length; i++) {
-            if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
-                return i;
-            } else if (i + 4 < data.length && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1) {
-                return i;
+
+        int nextNalStart = currentNalStart;
+        // Start searching for the next NAL unit after the current one's minimal start code (e.g. after 001)
+        // For 0001, this will be start + 4. For 001, this will be start + 3.
+        // The actual prefix length (3 or 4) will be included in the NAL unit itself.
+        searchOffset = currentNalStart + 3;
+
+
+        while (searchOffset <= len) { // Use <= to allow adding the last NAL unit
+            int prevNextNalStart = nextNalStart;
+            nextNalStart = -1; // Reset for current search
+
+            int findIdx = searchOffset;
+            while (findIdx + 2 < len) {
+                if (data[findIdx] == 0x00 && data[findIdx + 1] == 0x00) {
+                    if (data[findIdx + 2] == 0x01) { // 001
+                        nextNalStart = findIdx;
+                        break;
+                    } else if (findIdx + 3 < len && data[findIdx + 2] == 0x00 && data[findIdx + 3] == 0x01) { // 0001
+                        nextNalStart = findIdx;
+                        break;
+                    }
+                }
+                findIdx++;
             }
+
+            int currentNalEnd;
+            if (nextNalStart != -1) {
+                currentNalEnd = nextNalStart;
+            } else {
+                currentNalEnd = len; // Last NAL unit goes to the end of the data
+            }
+
+            if (currentNalEnd > prevNextNalStart) {
+                byte[] nal = new byte[currentNalEnd - prevNextNalStart];
+                System.arraycopy(data, prevNextNalStart, nal, 0, nal.length);
+                nalUnits.add(nal);
+            }
+
+            if (nextNalStart == -1) {
+                break; // No more NAL units
+            }
+            // Advance search offset. Start searching for the next NAL from the byte after the start of current NAL's prefix.
+            // For robust handling of consecutive start codes (e.g. 000001000001), ensure searchOffset moves forward.
+            // If nextNalStart points to 0x000001, next search should start at nextNalStart + 3
+            // If nextNalStart points to 0x00000001, next search should start at nextNalStart + 4 (or +3 is also fine as loop handles it)
+            searchOffset = nextNalStart + 3;
         }
-        return -1;
+        return nalUnits;
     }
+
+    // The findStartCode method is not strictly needed if splitNalUnits is robust.
+    // private static int findStartCode(byte[] data, int offset) { ... }
+
 
     private static byte[][] extractSpsAndPps(List<byte[]> nals) {
         byte[] sps = null, pps = null;
