@@ -261,33 +261,87 @@ public class H264DecodeTest {
         return MediaFormat.MIMETYPE_VIDEO_AVC;
     }
     private static List<byte[]> splitNalUnits(byte[] data) {
-        List<Integer> starts = new ArrayList<>();
-        for (int i = 0; i + 4 < data.length; i++) {
-            if (data[i]==0 && data[i+1]==0 && data[i+2]==0 && data[i+3]==1) {
-                starts.add(i);
+        List<byte[]> nalUnits = new ArrayList<>();
+        int len = data.length;
+        if (len == 0) {
+            return nalUnits;
+        }
+
+        int currentNalStart = -1;
+        int searchOffset = 0;
+
+        // Find the first NAL unit start
+        while (searchOffset + 2 < len) {
+            if (data[searchOffset] == 0x00 && data[searchOffset + 1] == 0x00) {
+                if (data[searchOffset + 2] == 0x01) { // 001
+                    currentNalStart = searchOffset;
+                    break;
+                } else if (searchOffset + 3 < len && data[searchOffset + 2] == 0x00 && data[searchOffset + 3] == 0x01) { // 0001
+                    currentNalStart = searchOffset;
+                    break;
+                }
             }
+            searchOffset++;
         }
-        List<byte[]> units = new ArrayList<>();
-        for (int i = 0; i < starts.size(); i++) {
-            int s = starts.get(i);
-            int e = (i + 1 < starts.size()) ? starts.get(i+1) : data.length;
-            int len = e - s;
-            byte[] unit = new byte[len];
-            System.arraycopy(data, s, unit, 0, len);
-            units.add(unit);
+
+        if (currentNalStart == -1) {
+            Log.w(TAG, "No NAL unit start codes found in H.264 data.");
+            return nalUnits;
         }
-        return units;
-    }
-    private static int findStartCode(byte[] data, int offset) {
-        for (int i = offset; i + 3 < data.length; i++) {
-            if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
-                return i;
-            } else if (i + 4 < data.length && data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1) {
-                return i;
+
+        int nextNalStart = currentNalStart;
+        // Start searching for the next NAL unit after the current one's minimal start code (e.g. after 001)
+        // For 0001, this will be start + 4. For 001, this will be start + 3.
+        // The actual prefix length (3 or 4) will be included in the NAL unit itself.
+        searchOffset = currentNalStart + 3;
+
+
+        while (searchOffset <= len) { // Use <= to allow adding the last NAL unit
+            int prevNextNalStart = nextNalStart;
+            nextNalStart = -1; // Reset for current search
+
+            int findIdx = searchOffset;
+            while (findIdx + 2 < len) {
+                if (data[findIdx] == 0x00 && data[findIdx + 1] == 0x00) {
+                    if (data[findIdx + 2] == 0x01) { // 001
+                        nextNalStart = findIdx;
+                        break;
+                    } else if (findIdx + 3 < len && data[findIdx + 2] == 0x00 && data[findIdx + 3] == 0x01) { // 0001
+                        nextNalStart = findIdx;
+                        break;
+                    }
+                }
+                findIdx++;
             }
+
+            int currentNalEnd;
+            if (nextNalStart != -1) {
+                currentNalEnd = nextNalStart;
+            } else {
+                currentNalEnd = len; // Last NAL unit goes to the end of the data
+            }
+
+            if (currentNalEnd > prevNextNalStart) {
+                byte[] nal = new byte[currentNalEnd - prevNextNalStart];
+                System.arraycopy(data, prevNextNalStart, nal, 0, nal.length);
+                nalUnits.add(nal);
+            }
+
+            if (nextNalStart == -1) {
+                break; // No more NAL units
+            }
+            // Advance search offset. Start searching for the next NAL from the byte after the start of current NAL's prefix.
+            // For robust handling of consecutive start codes (e.g. 000001000001), ensure searchOffset moves forward.
+            // If nextNalStart points to 0x000001, next search should start at nextNalStart + 3
+            // If nextNalStart points to 0x00000001, next search should start at nextNalStart + 4 (or +3 is also fine as loop handles it)
+            searchOffset = nextNalStart + 3;
         }
-        return -1;
+        return nalUnits;
     }
+
+    // The findStartCode method is not strictly needed if splitNalUnits is robust.
+    // private static int findStartCode(byte[] data, int offset) { ... }
+
 
     private static byte[][] extractSpsAndPps(List<byte[]> nals) {
         byte[] sps = null, pps = null;

@@ -94,27 +94,51 @@ public class HevcDecoder {
             }
 
             int levelIdc = spsInfo.levelIdc;
+            boolean tierFlag = spsInfo.tierFlag; // Get the tier flag
             int androidLevel = -1;
-            if (levelIdc <= 30) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel1;
-            else if (levelIdc <= 60) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel2;
-            else if (levelIdc <= 63) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel21;
-            else if (levelIdc <= 90) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel3;
-            else if (levelIdc <= 93) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel31;
-            else if (levelIdc <= 120) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel4;
-            else if (levelIdc <= 123) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel41;
-            else if (levelIdc <= 150) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel5;
-            else if (levelIdc <= 153) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel51;
-            else if (levelIdc <= 156) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel52;
-            else if (levelIdc <= 180) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel6;
-            else if (levelIdc <= 183) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel61;
-            else if (levelIdc <= 186) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel62;
-            else { Log.w(TAG, "Unmapped HEVC level_idc: " + levelIdc + " for KEY_LEVEL"); }
-            if (androidLevel != -1) {
-                format.setInteger(MediaFormat.KEY_LEVEL, androidLevel);
-                Log.i(TAG, "Set KEY_LEVEL to " + androidLevel + " (from level_idc " + levelIdc + ")");
+
+            if (tierFlag) { // High Tier
+                Log.i(TAG, "Attempting to set High Tier level for level_idc: " + levelIdc);
+                if (levelIdc <= 30) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCHighTierLevel1;
+                else if (levelIdc <= 60) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCHighTierLevel2;
+                else if (levelIdc <= 63) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCHighTierLevel21;
+                else if (levelIdc <= 90) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCHighTierLevel3;
+                else if (levelIdc <= 93) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCHighTierLevel31;
+                else if (levelIdc <= 120) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCHighTierLevel4;
+                else if (levelIdc <= 123) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCHighTierLevel41;
+                else if (levelIdc <= 150) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCHighTierLevel5;
+                else if (levelIdc <= 153) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCHighTierLevel51;
+                else if (levelIdc <= 156) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCHighTierLevel52;
+                else if (levelIdc <= 180) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCHighTierLevel6;
+                else if (levelIdc <= 183) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCHighTierLevel61;
+                else if (levelIdc <= 186) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCHighTierLevel62;
+                else { Log.w(TAG, "Unmapped HEVC High Tier level_idc: " + levelIdc + " for KEY_LEVEL"); }
+            } else { // Main Tier
+                Log.i(TAG, "Attempting to set Main Tier level for level_idc: " + levelIdc);
+                if (levelIdc <= 30) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel1;
+                else if (levelIdc <= 60) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel2;
+                else if (levelIdc <= 63) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel21;
+                else if (levelIdc <= 90) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel3;
+                else if (levelIdc <= 93) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel31;
+                else if (levelIdc <= 120) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel4;
+                else if (levelIdc <= 123) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel41;
+                else if (levelIdc <= 150) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel5;
+                else if (levelIdc <= 153) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel51;
+                else if (levelIdc <= 156) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel52;
+                else if (levelIdc <= 180) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel6;
+                else if (levelIdc <= 183) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel61;
+                else if (levelIdc <= 186) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel62;
+                else { Log.w(TAG, "Unmapped HEVC Main Tier level_idc: " + levelIdc + " for KEY_LEVEL"); }
             }
 
-            Log.i(TAG, "Final MediaFormat configuration: CSDs, Width, Height, Mapped Profile & Level. No explicit ColorFormat. SPS ChromaFormatIDC: " + spsInfo.chromaFormatIdc);
+            if (androidLevel != -1) {
+                format.setInteger(MediaFormat.KEY_LEVEL, androidLevel);
+                Log.i(TAG, "Set KEY_LEVEL to " + androidLevel + " (from level_idc " + levelIdc + ", tier: " + (tierFlag ? "High" : "Main") + ")");
+            } else {
+                Log.w(TAG, "No Android KEY_LEVEL mapping found for HEVC level_idc: " + levelIdc + " and tier: " + (tierFlag ? "High" : "Main"));
+            }
+
+            Log.i(TAG, "Final MediaFormat configuration: CSDs, Width, Height, Mapped Profile & Level. SPS ChromaFormatIDC: " + spsInfo.chromaFormatIdc + ", TierFlag: " + spsInfo.tierFlag);
             Log.d(TAG, "MediaFormat: " + format.toString());
 
 
