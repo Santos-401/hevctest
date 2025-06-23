@@ -205,7 +205,7 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
             // HEVC (.bit) ファイルの処理
-            else if (name.endsWith(".bit")) {
+            else if (name.endsWith(".bit")|| name.endsWith(".bin")) {
                 // HevcDecoderには出力ファイルのフルパスを渡す
                 String outPath = new File(resultDir, name + ".yuv").getAbsolutePath();
 
