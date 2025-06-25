@@ -119,6 +119,8 @@ public class H264DecodeTest {
         MediaCodec decoder = null;
         AtomicInteger frameCount = new AtomicInteger(0);
 
+        Log.i(TAG, "H.264: Decoding with codec: " + codecName + ", Total NAL units to process: " + nals.size());
+
         try {
             decoder = MediaCodec.createByCodecName(codecName);
             decoder.configure(format, null, null, 0);
@@ -138,6 +140,28 @@ public class H264DecodeTest {
                         if (inIndex >= 0) {
                             if (nalUnitIdx < nals.size()) {
                                 byte[] nal = nals.get(nalUnitIdx);
+                                if (nal == null || nal.length == 0) {
+                                    Log.w(TAG, "H.264: Skipping empty NAL unit at index " + nalUnitIdx);
+                                    nalUnitIdx++;
+                                    continue;
+                                }
+
+                                // Log NAL unit type
+                                int nalType = -1;
+                                int nalHeaderOffset = -1;
+                                if (nal.length > 4 && nal[0] == 0 && nal[1] == 0 && nal[2] == 0 && nal[3] == 1) {
+                                    nalHeaderOffset = 4;
+                                } else if (nal.length > 3 && nal[0] == 0 && nal[1] == 0 && nal[2] == 1) {
+                                    nalHeaderOffset = 3;
+                                }
+
+                                if (nalHeaderOffset != -1 && nal.length > nalHeaderOffset) {
+                                    nalType = nal[nalHeaderOffset] & 0x1F; // Lower 5 bits for H.264 NAL type
+                                    Log.d(TAG, "H.264: Queuing NAL unit " + nalUnitIdx + "/" + nals.size() + ", Type: " + nalType + ", Length: " + nal.length + ", PTS: " + presentationTimeUs);
+                                } else {
+                                    Log.w(TAG, "H.264: Queuing NAL unit " + nalUnitIdx + "/" + nals.size() + " with invalid start code or insufficient length. Length: " + nal.length + ", PTS: " + presentationTimeUs);
+                                }
+
                                 ByteBuffer ib = decoder.getInputBuffer(inIndex);
                                 if (ib != null) {
                                     ib.clear();
@@ -260,24 +284,69 @@ public class H264DecodeTest {
         // 見つからなければタイプ指定
         return MediaFormat.MIMETYPE_VIDEO_AVC;
     }
+
+    // Replaced with a more robust version adapted from HevcDecoder.splitAnnexB
     private static List<byte[]> splitNalUnits(byte[] data) {
-        List<Integer> starts = new ArrayList<>();
-        for (int i = 0; i + 4 < data.length; i++) {
-            if (data[i]==0 && data[i+1]==0 && data[i+2]==0 && data[i+3]==1) {
-                starts.add(i);
+        List<byte[]> list = new ArrayList<>();
+        if (data == null || data.length == 0) {
+            return list;
+        }
+        int len = data.length;
+        int offset = 0;
+        while (offset < len) {
+            int start = -1, prefix = 0;
+            // Find next start code
+            for (int i = offset; i + 2 < len; i++) { // Ensure at least 3 bytes for a start code
+                if (data[i] == 0 && data[i+1] == 0) {
+                    if (i + 3 < len && data[i+2] == 0 && data[i+3] == 1) { // 00 00 00 01
+                        start = i;
+                        prefix = 4;
+                        break;
+                    } else if (data[i+2] == 1) { // 00 00 01
+                        start = i;
+                        prefix = 3;
+                        break;
+                    }
+                }
             }
+
+            if (start < 0) { // No more start codes
+                // If there's remaining data and we have found at least one NAL unit,
+                // it might be a stream that doesn't end with a start code for the last NAL.
+                // However, typical Annex B NAL units are self-contained with start codes.
+                // For simplicity here, we assume NAL units are always prefixed.
+                break;
+            }
+
+            // Find the start of the *next* NAL unit to determine the end of the current one
+            int nextStart = -1;
+            for (int i = start + prefix; i + 2 < len; i++) {
+                if (data[i] == 0 && data[i+1] == 0) {
+                    if (i + 3 < len && data[i+2] == 0 && data[i+3] == 1) { // 00 00 00 01
+                        nextStart = i;
+                        break;
+                    } else if (data[i+2] == 1) { // 00 00 01
+                        nextStart = i;
+                        break;
+                    }
+                }
+            }
+
+            int end = (nextStart > start) ? nextStart : len;
+            byte[] nal = new byte[end - start];
+            System.arraycopy(data, start, nal, 0, nal.length);
+            list.add(nal);
+            offset = end;
         }
-        List<byte[]> units = new ArrayList<>();
-        for (int i = 0; i < starts.size(); i++) {
-            int s = starts.get(i);
-            int e = (i + 1 < starts.size()) ? starts.get(i+1) : data.length;
-            int len = e - s;
-            byte[] unit = new byte[len];
-            System.arraycopy(data, s, unit, 0, len);
-            units.add(unit);
+        if (list.isEmpty() && data.length > 0) {
+            Log.w(TAG, "splitNalUnits: No NAL units found, but data was present. This might indicate a non-Annex B stream or malformed data.");
+            // Optionally, if you suspect the entire data is a single NAL unit without start codes (very unlikely for files)
+            // or if the first NAL unit's start code was missed by a previous process, you might add it.
+            // However, for Annex B, NALs should be prefixed.
         }
-        return units;
+        return list;
     }
+
     private static int findStartCode(byte[] data, int offset) {
         for (int i = offset; i + 3 < data.length; i++) {
             if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
