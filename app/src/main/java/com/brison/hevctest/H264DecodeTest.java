@@ -41,9 +41,40 @@ public class H264DecodeTest {
         }
         // 2. NAL分割 & SPS/PPS抽出
         List<byte[]> nals = splitNalUnits(rawData);
+
+        Log.i(TAG, "decodeRawBitstream: Found " + nals.size() + " NAL units after splitting.");
+        for (int i = 0; i < Math.min(nals.size(), 5); i++) {
+            byte[] nal = nals.get(i);
+            if (nal == null || nal.length < 4) { // Need at least 3 for start code + 1 for type
+                Log.w(TAG, "decodeRawBitstream: NAL unit " + i + " is null or too short. Length: " + (nal == null ? "null" : nal.length));
+                continue;
+            }
+            int nalType = -1;
+            int nalHeaderOffset = -1;
+            if (nal.length > 4 && nal[0] == 0 && nal[1] == 0 && nal[2] == 0 && nal[3] == 1) { // 00 00 00 01
+                nalHeaderOffset = 4;
+            } else if (nal[0] == 0 && nal[1] == 0 && nal[2] == 1) { // 00 00 01
+                nalHeaderOffset = 3;
+            }
+
+            if (nalHeaderOffset != -1 && nal.length > nalHeaderOffset) {
+                nalType = nal[nalHeaderOffset] & 0x1F;
+                Log.i(TAG, "decodeRawBitstream: NAL unit " + i + " - Type: " + nalType + ", Length: " + nal.length);
+            } else {
+                // Log first few bytes if type cannot be determined to help debug splitNalUnits
+                StringBuilder sb = new StringBuilder();
+                for(int j=0; j < Math.min(nal.length, 10); j++) {
+                    sb.append(String.format("%02X ", nal[j]));
+                }
+                Log.w(TAG, "decodeRawBitstream: NAL unit " + i + " - Could not determine type (headerOffset=" + nalHeaderOffset + "). Length: " + nal.length + ". First bytes: " + sb.toString());
+            }
+        }
+
         byte[][] csd = extractSpsAndPps(nals);
         if (csd[0] == null || csd[1] == null) {
             Log.e(TAG, "Failed to extract SPS or PPS");
+            if (csd[0] == null) Log.e(TAG, "SPS is null");
+            if (csd[1] == null) Log.e(TAG, "PPS is null");
             return 0;
         }
         // 3. 解像度取得 (H264ResolutionExtractor を利用)
@@ -288,62 +319,84 @@ public class H264DecodeTest {
     // Replaced with a more robust version adapted from HevcDecoder.splitAnnexB
     private static List<byte[]> splitNalUnits(byte[] data) {
         List<byte[]> list = new ArrayList<>();
-        if (data == null || data.length == 0) {
+        if (data == null || data.length < 3) { // Need at least 3 bytes for any start code
             return list;
         }
         int len = data.length;
-        int offset = 0;
-        while (offset < len) {
-            int start = -1, prefix = 0;
-            // Find next start code
-            for (int i = offset; i + 2 < len; i++) { // Ensure at least 3 bytes for a start code
-                if (data[i] == 0 && data[i+1] == 0) {
-                    if (i + 3 < len && data[i+2] == 0 && data[i+3] == 1) { // 00 00 00 01
-                        start = i;
-                        prefix = 4;
-                        break;
-                    } else if (data[i+2] == 1) { // 00 00 01
-                        start = i;
-                        prefix = 3;
-                        break;
-                    }
+        int initialOffset = 0;
+
+        // Find the first start code in the entire stream
+        int firstStartCodePos = -1;
+        int firstPrefix = 0;
+        for (int i = 0; i + 2 < len; i++) {
+            if (data[i] == 0 && data[i+1] == 0) {
+                if (i + 3 < len && data[i+2] == 0 && data[i+3] == 1) { // 00 00 00 01
+                    firstStartCodePos = i;
+                    firstPrefix = 4; // Length of this start code
+                    break;
+                } else if (data[i+2] == 1) { // 00 00 01
+                    firstStartCodePos = i;
+                    firstPrefix = 3; // Length of this start code
+                    break;
                 }
             }
+        }
 
-            if (start < 0) { // No more start codes
-                // If there's remaining data and we have found at least one NAL unit,
-                // it might be a stream that doesn't end with a start code for the last NAL.
-                // However, typical Annex B NAL units are self-contained with start codes.
-                // For simplicity here, we assume NAL units are always prefixed.
+        if (firstStartCodePos == -1) {
+            Log.w(TAG, "splitNalUnits: No start codes found in the entire data stream.");
+            return list; // No start codes anywhere, so no NAL units
+        }
+
+        // Start processing from the first found start code
+        int offset = firstStartCodePos;
+
+        while (offset < len) {
+            // The current NAL unit starts at 'offset'. Its start code length is 'firstPrefix' if it's the first NAL,
+            // or needs to be re-determined for subsequent NALs if we only stored 'start' positions.
+            // For simplicity, we assume 'offset' is always the beginning of a NAL unit including its start code.
+            // The 'prefix' variable will be determined for the *current* NAL unit at 'offset'.
+            int currentNalStart = offset;
+            int currentPrefix = 0;
+            if (currentNalStart + 3 < len && data[currentNalStart] == 0 && data[currentNalStart+1] == 0 && data[currentNalStart+2] == 0 && data[currentNalStart+3] == 1) {
+                currentPrefix = 4;
+            } else if (currentNalStart + 2 < len && data[currentNalStart] == 0 && data[currentNalStart+1] == 0 && data[currentNalStart+2] == 1) {
+                currentPrefix = 3;
+            } else {
+                // Should not happen if offset is always at a start code.
+                // This indicates a logic error or malformed stream after the first NAL.
+                Log.e(TAG, "splitNalUnits: Expected start code at offset " + offset + " but not found. Stopping parse.");
                 break;
             }
 
             // Find the start of the *next* NAL unit to determine the end of the current one
-            int nextStart = -1;
-            for (int i = start + prefix; i + 2 < len; i++) {
+            int nextNalStart = -1;
+            for (int i = currentNalStart + currentPrefix; i + 2 < len; i++) {
                 if (data[i] == 0 && data[i+1] == 0) {
                     if (i + 3 < len && data[i+2] == 0 && data[i+3] == 1) { // 00 00 00 01
-                        nextStart = i;
+                        nextNalStart = i;
                         break;
                     } else if (data[i+2] == 1) { // 00 00 01
-                        nextStart = i;
+                        nextNalStart = i;
                         break;
                     }
                 }
             }
 
-            int end = (nextStart > start) ? nextStart : len;
-            byte[] nal = new byte[end - start];
-            System.arraycopy(data, start, nal, 0, nal.length);
+            int endOfCurrentNal = (nextNalStart != -1) ? nextNalStart : len;
+            byte[] nal = new byte[endOfCurrentNal - currentNalStart];
+            System.arraycopy(data, currentNalStart, nal, 0, nal.length);
             list.add(nal);
-            offset = end;
+
+            if (nextNalStart != -1) {
+                offset = nextNalStart; // Move to the beginning of the next NAL unit
+            } else {
+                break; // No more NAL units found
+            }
         }
-        if (list.isEmpty() && data.length > 0) {
-            Log.w(TAG, "splitNalUnits: No NAL units found, but data was present. This might indicate a non-Annex B stream or malformed data.");
-            // Optionally, if you suspect the entire data is a single NAL unit without start codes (very unlikely for files)
-            // or if the first NAL unit's start code was missed by a previous process, you might add it.
-            // However, for Annex B, NALs should be prefixed.
-        }
+        // This log might be redundant now if the firstStartCodePos check handles empty streams.
+        // if (list.isEmpty() && data.length > 0 && firstStartCodePos != -1) {
+        //     Log.w(TAG, "splitNalUnits: NAL units list is empty after processing, but start codes were initially found. Data length: " + data.length);
+        // }
         return list;
     }
 
