@@ -18,14 +18,16 @@ public class HEVCResolutionExtractor {
         public final int profileIdc;
         public final int levelIdc;
         public final int chromaFormatIdc;
+        public final boolean generalTierFlag; // Added generalTierFlag
         // Consider adding bitDepthLuma, bitDepthChroma if needed later
 
-        public SPSInfo(int width, int height, int profileIdc, int levelIdc, int chromaFormatIdc) {
+        public SPSInfo(int width, int height, int profileIdc, int levelIdc, int chromaFormatIdc, boolean generalTierFlag) {
             this.width = width;
             this.height = height;
             this.profileIdc = profileIdc;
             this.levelIdc = levelIdc;
             this.chromaFormatIdc = chromaFormatIdc;
+            this.generalTierFlag = generalTierFlag;
         }
     }
 
@@ -52,12 +54,14 @@ public class HEVCResolutionExtractor {
         br.readBit();
 
         // profile_tier_level() をパースして IDC 値を取得
-        Pair<Integer, Integer> profileLevel = parseProfileTierLevel(br, maxSubLayersMinus1);
-        if (profileLevel == null) { // Should ideally not happen if PTL is mandatory and correctly parsed
+        // The PTL now returns a triple: profile, level, tier flag
+        PTLInfo ptlInfo = parseProfileTierLevel(br, maxSubLayersMinus1);
+        if (ptlInfo == null) { // Should ideally not happen if PTL is mandatory and correctly parsed
             return null;
         }
-        int profileIdc = profileLevel.first;
-        int levelIdc = profileLevel.second;
+        int profileIdc = ptlInfo.profileIdc;
+        int levelIdc = ptlInfo.levelIdc;
+        boolean tierFlag = ptlInfo.tierFlag;
 
         // sps_seq_parameter_set_id (ue(v))
         br.readUE();
@@ -84,14 +88,27 @@ public class HEVCResolutionExtractor {
         // Other SPS fields like bit_depth_luma_minus8, bit_depth_chroma_minus8, etc.,
         // can be parsed here if needed for SPSInfo. For now, focusing on requested fields.
 
-        return new SPSInfo(picWidth, picHeight, profileIdc, levelIdc, chromaFormatIdc);
+        return new SPSInfo(picWidth, picHeight, profileIdc, levelIdc, chromaFormatIdc, tierFlag);
     }
 
-    private static Pair<Integer, Integer> parseProfileTierLevel(BitReader br, int maxSubLayersMinus1) {
+    // Helper class for PTL info
+    private static class PTLInfo {
+        final int profileIdc;
+        final int levelIdc;
+        final boolean tierFlag;
+
+        PTLInfo(int profile, int level, boolean tier) {
+            this.profileIdc = profile;
+            this.levelIdc = level;
+            this.tierFlag = tier;
+        }
+    }
+
+    private static PTLInfo parseProfileTierLevel(BitReader br, int maxSubLayersMinus1) {
         // general_profile_space (2 bits)
         br.readBits(2);
         // general_tier_flag (1 bit)
-        br.readBit();
+        boolean general_tier_flag = (br.readBit() == 1);
         // general_profile_idc (5 bits)
         int general_profile_idc = (int) br.readBits(5);
         // general_profile_compatibility_flags (32 bits)
@@ -131,7 +148,7 @@ public class HEVCResolutionExtractor {
                 br.readBits(8);    // sub_layer_level_idc[i]
             }
         }
-        return new Pair<>(general_profile_idc, general_level_idc);
+        return new PTLInfo(general_profile_idc, general_level_idc, general_tier_flag);
     }
 
     private static int findNalUnit(byte[] data, byte nalType) {
