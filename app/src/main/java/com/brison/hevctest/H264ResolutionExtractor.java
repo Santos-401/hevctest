@@ -22,14 +22,16 @@ public class H264ResolutionExtractor {
         public final int profile_idc;
         public final int level_idc;
         public final int chroma_format_idc;
+        public final boolean vui_parameters_present_flag; // ★追加
 
 
-        public H264SPSInfo(int width, int height, int profile_idc, int level_idc, int chroma_format_idc) {
+        public H264SPSInfo(int width, int height, int profile_idc, int level_idc, int chroma_format_idc, boolean vui_parameters_present_flag) { // ★追加
             this.width = width;
             this.height = height;
             this.profile_idc = profile_idc;
             this.level_idc = level_idc;
             this.chroma_format_idc = chroma_format_idc;
+            this.vui_parameters_present_flag = vui_parameters_present_flag; // ★追加
         }
 
         public Pair<Integer,Integer> getResolution() {
@@ -235,6 +237,52 @@ public class H264ResolutionExtractor {
             frame_crop_bottom_offset = readUE(br);
         }
 
+        boolean vui_parameters_present_flag = (br.readBit() == 1); // ★ VUIフラグの読み取り
+        if (vui_parameters_present_flag) {
+            // Minimal VUI parsing to advance the bit reader correctly
+            // Based on H.264 spec (e.g., Rec. ITU-T H.264 (08/2021) E.1.1 VUI parameters syntax)
+            Log.d(TAG, "VUI parameters are present, attempting to parse/skip relevant parts.");
+
+            boolean aspect_ratio_info_present_flag = (br.readBit() == 1);
+            if (aspect_ratio_info_present_flag) {
+                int aspect_ratio_idc = br.readBits(8);
+                if (aspect_ratio_idc == 255 /* Extended_SAR */) {
+                    br.readBits(16); // sar_width
+                    br.readBits(16); // sar_height
+                }
+            }
+            boolean overscan_info_present_flag = (br.readBit() == 1);
+            if (overscan_info_present_flag) {
+                br.readBit(); // overscan_appropriate_flag
+            }
+            boolean video_signal_type_present_flag = (br.readBit() == 1);
+            if (video_signal_type_present_flag) {
+                br.readBits(3); // video_format
+                br.readBit();   // video_full_range_flag
+                boolean colour_description_present_flag = (br.readBit() == 1);
+                if (colour_description_present_flag) {
+                    br.readBits(8); // colour_primaries
+                    br.readBits(8); // transfer_characteristics
+                    br.readBits(8); // matrix_coefficients
+                }
+            }
+            boolean chroma_loc_info_present_flag = (br.readBit() == 1);
+            if (chroma_loc_info_present_flag) {
+                readUE(br); // chroma_sample_loc_type_top_field
+                readUE(br); // chroma_sample_loc_type_bottom_field
+            }
+            boolean timing_info_present_flag = (br.readBit() == 1);
+            if (timing_info_present_flag) {
+                br.readBits(32); // num_units_in_tick
+                br.readBits(32); // time_scale
+                br.readBit();    // fixed_frame_rate_flag
+            }
+            // Note: NAL HRD, VCL HRD, pic_struct, bitstream_restriction parsing are omitted for brevity
+            // but if they are present, the bit reader must be advanced past them.
+            // For now, assuming they are not present or this minimal skip is sufficient.
+        }
+
+
         int width = (pic_width_in_mbs_minus1 + 1) * 16;
         int height = (pic_height_in_map_units_minus1 + 1) * 16 * (frame_mbs_only_flag ? 1 : 2);
 
@@ -244,18 +292,15 @@ public class H264ResolutionExtractor {
 
             if (chroma_format_idc == 1) { // 4:2:0
                 cropUnitX = 2;
-                cropUnitY *= 2; // Height crop unit is also affected by chroma subsampling for interlaced/field content
+                cropUnitY *= 2; 
             } else if (chroma_format_idc == 2) { // 4:2:2
                 cropUnitX = 2;
-                // cropUnitY remains as (frame_mbs_only_flag ? 1 : 2)
             }
-            // For chroma_format_idc 0 (monochrome) or 3 (4:4:4), cropUnitX/Y remain 1 (or 2 for Y if interlaced)
-
             width -= (frame_crop_left_offset + frame_crop_right_offset) * cropUnitX;
             height -= (frame_crop_top_offset + frame_crop_bottom_offset) * cropUnitY;
         }
 
-        return new H264SPSInfo(width, height, profile_idc, level_idc, chroma_format_idc);
+        return new H264SPSInfo(width, height, profile_idc, level_idc, chroma_format_idc, vui_parameters_present_flag);
     }
 
     private static byte[] removeEmulationPreventionBytes(byte[] data) {
@@ -274,16 +319,16 @@ public class H264ResolutionExtractor {
 
     private static int readUE(BitReader br) {
         int zeroCount = 0;
-        while (br.readBits(1) == 0 && zeroCount < 32) { // Added max zeroCount to prevent infinite loop
+        while (br.readBits(1) == 0 && zeroCount < 32) { 
             zeroCount++;
         }
-        if (zeroCount == 32) return 0; // Should indicate an error or very large number
-        if (zeroCount == 0) return 0; // code_num = 0
+        if (zeroCount == 32) return 0; 
+        if (zeroCount == 0) return 0; 
         return (1 << zeroCount) - 1 + br.readBits(zeroCount);
     }
 
     private static int readSE(BitReader br) {
         int val = readUE(br);
-        return ((val & 1) == 1) ? (val + 1) / 2 : -(val / 2); // More direct way to calculate signed Exp-Golomb
+        return ((val & 1) == 1) ? (val + 1) / 2 : -(val / 2); 
     }
 }
