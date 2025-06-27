@@ -195,7 +195,7 @@ public class MainActivity extends AppCompatActivity {
             }
             String name = f.getName();
             // H.264 (.264) ファイルの処理
-            if (name.endsWith(".264") || name.endsWith(".h264")|| name.endsWith(".avc")|| name.endsWith(".jsv")|| name.endsWith(".jvt")) {
+            if (name.endsWith(".264") || name.endsWith(".h264")|| name.endsWith(".avc")|| name.endsWith(".jsv")|| name.endsWith(".jvt")|| name.endsWith(".26l")) {
                 try {
                     // H264DecodeTestには出力先ディレクトリのパスを渡す
                     H264DecodeTest.decodeRawBitstream(f.getAbsolutePath(), resultDir.getAbsolutePath());
