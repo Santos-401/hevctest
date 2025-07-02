@@ -364,7 +364,7 @@ public class MainActivity extends AppCompatActivity {
             Log.i(TAG, "USB出力ディレクトリ: " + outputParentDirDocFile.getUri());
         } else { // Processing internal files
             File internalAppDir = getFilesDir();
-            File internalResultDir = new File(internalAppDir, "result_internal");
+            File internalResultDir = new File(internalAppDir, "result");
             if (!internalResultDir.exists() && !internalResultDir.mkdirs()) {
                 throw new IOException("内部ストレージに 'result_internal' ディレクトリを作成できませんでした。");
             }
