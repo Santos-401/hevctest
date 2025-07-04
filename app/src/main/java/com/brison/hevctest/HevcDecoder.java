@@ -15,7 +15,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream; // Import OutputStream
+import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -25,17 +25,17 @@ public class HevcDecoder {
     private static final String TAG = "HevcDecoder";
     private static final String MIME = MediaFormat.MIMETYPE_VIDEO_HEVC;
     private static final long TIMEOUT_US = 10000; // 10ms
-    private static final long STUCK_TIMEOUT_MS = 10000L; // 10 seconds
+    private static final long STUCK_TIMEOUT_MS = 10000L; // 10 seconds for stuck detection
+    private static final long TRY_AGAIN_LOG_INTERVAL_MS = 2000; // Log INFO_TRY_AGAIN every 2 seconds
 
-    // Helper method to convert byte array to Hex String for logging
+
     private static String bytesToHex(byte[] bytes, int maxLength) {
         if (bytes == null) return "null";
         StringBuilder sb = new StringBuilder();
         int lengthToLog = Math.min(bytes.length, maxLength);
-        if (lengthToLog == 0 && bytes.length > 0) { // If maxLength is 0 but bytes exist, show at least indication of non-empty
-            lengthToLog = Math.min(bytes.length, 8); // Show a few bytes if maxLength was 0
+        if (lengthToLog == 0 && bytes.length > 0) {
+            lengthToLog = Math.min(bytes.length, 8);
         }
-
         for (int i = 0; i < lengthToLog; i++) {
             sb.append(String.format("%02X ", bytes[i]));
         }
@@ -48,14 +48,12 @@ public class HevcDecoder {
     }
 
     public String findSoftwareDecoder(String mimeType) {
-        // Fallback for C2 components that don't correctly report isSoftwareOnly() or for older OS versions.
         try {
-            MediaCodecList codecList = new MediaCodecList(MediaCodecList.REGULAR_CODECS); // Or ALL_CODECS
+            MediaCodecList codecList = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
             for (MediaCodecInfo codecInfo : codecList.getCodecInfos()) {
                 if (codecInfo.isEncoder()) {
                     continue;
                 }
-
                 boolean isSoftware = false;
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     isSoftware = codecInfo.isSoftwareOnly();
@@ -75,517 +73,426 @@ public class HevcDecoder {
                 }
                 if (!isSoftware) continue;
 
-
                 String[] types = codecInfo.getSupportedTypes();
                 for (String type : types) {
                     if (type.equalsIgnoreCase(mimeType)) {
-                        Log.i(TAG, "Found potential software decoder: " + codecInfo.getName());
+                        Log.i(TAG, "Found potential software HEVC decoder: " + codecInfo.getName());
                         return codecInfo.getName();
                     }
                 }
             }
         } catch (Exception e) {
-            Log.e(TAG, "Error querying MediaCodecList for software decoder", e);
+            Log.e(TAG, "Error querying MediaCodecList for software HEVC decoder", e);
         }
-        Log.w(TAG, "No suitable software decoder found for " + mimeType);
+        Log.w(TAG, "No suitable software HEVC decoder found for " + mimeType + ". Will rely on createDecoderByType if HW fails.");
         return "";
     }
 
-
     private List<byte[]> splitAnnexB(byte[] data) {
         List<byte[]> nalUnits = new ArrayList<>();
+        if (data == null || data.length == 0) {
+            return nalUnits;
+        }
         int i = 0;
         while (i < data.length) {
             int nextStartCode = -1;
-            // Find next start code (00 00 01 or 00 00 00 01)
-            for (int j = i + 3; j < data.length - 3; j++) { // Ensure there's room for a 3 or 4 byte start code
+            for (int j = i + 1; j <= data.length - 3; j++) {
                 if (data[j] == 0x00 && data[j + 1] == 0x00) {
                     if (data[j + 2] == 0x01) {
                         nextStartCode = j;
                         break;
-                    } else if (data[j + 2] == 0x00 && j + 3 < data.length && data[j + 3] == 0x01) {
+                    } else if (j + 3 < data.length && data[j + 2] == 0x00 && data[j + 3] == 0x01) {
                         nextStartCode = j;
                         break;
                     }
                 }
             }
 
-            int currentUnitStart = i;
-            // Skip leading start code bytes for the NAL unit content itself
-            if (data[i] == 0x00 && data[i+1] == 0x00) {
-                if (data[i+2] == 0x01) {
-                    currentUnitStart = i + 3;
-                } else if (data[i+2] == 0x00 && i + 3 < data.length && data[i+3] == 0x01) {
-                    currentUnitStart = i + 4;
-                }
-            }
-
-
             byte[] nalUnit;
-            if (nextStartCode == -1) { // Last NAL unit
-                nalUnit = Arrays.copyOfRange(data, currentUnitStart, data.length);
+            if (nextStartCode == -1) {
+                nalUnit = Arrays.copyOfRange(data, i, data.length);
                 nalUnits.add(nalUnit);
                 break;
             } else {
-                nalUnit = Arrays.copyOfRange(data, currentUnitStart, nextStartCode);
+                nalUnit = Arrays.copyOfRange(data, i, nextStartCode);
                 nalUnits.add(nalUnit);
-                i = nextStartCode; // Move to the beginning of the next start code
+                i = nextStartCode;
             }
         }
         return nalUnits;
     }
 
-    public void decodeUriToUri(Context context, Uri inputUri, Uri outputUri) throws IOException {
-        byte[] data;
-        try (InputStream inputStream = context.getContentResolver().openInputStream(inputUri)) {
-            if (inputStream == null) {
-                throw new IOException("Unable to open input stream from URI: " + inputUri);
-            }
-            ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
-            byte[] buffer = new byte[1024 * 4];
-            int bytesRead;
-            while ((bytesRead = inputStream.read(buffer)) != -1) {
-                byteStream.write(buffer, 0, bytesRead);
-            }
-            data = byteStream.toByteArray();
+    private MediaFormat createMediaFormat(byte[] vps, byte[] spsByteArr, byte[] pps, HEVCResolutionExtractor.SPSInfo spsInfo, String logTagPrefix) {
+        MediaFormat format = MediaFormat.createVideoFormat(MIME, spsInfo.width, spsInfo.height);
+        Log.d(TAG, logTagPrefix + "Creating MediaFormat for " + spsInfo.width + "x" + spsInfo.height);
+
+        if (vps != null) format.setByteBuffer("csd-0", ByteBuffer.wrap(vps));
+        if (spsByteArr != null) format.setByteBuffer("csd-1", ByteBuffer.wrap(spsByteArr));
+        if (pps != null) format.setByteBuffer("csd-2", ByteBuffer.wrap(pps));
+
+        int profileIdc = spsInfo.profileIdc;
+        int androidProfile = -1;
+        switch (profileIdc) {
+            case 1: androidProfile = MediaCodecInfo.CodecProfileLevel.HEVCProfileMain; break;
+            case 2: androidProfile = MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10; break;
+            default: Log.w(TAG, logTagPrefix + "Unmapped HEVC profile_idc: " + profileIdc); break;
+        }
+        if (androidProfile != -1) {
+            format.setInteger(MediaFormat.KEY_PROFILE, androidProfile);
+            Log.d(TAG, logTagPrefix + "Set KEY_PROFILE to: " + androidProfile + " (from profileIdc: " + profileIdc + ")");
+        } else {
+            Log.w(TAG, logTagPrefix + "KEY_PROFILE will not be set for profile_idc " + profileIdc);
         }
 
-        HEVCResolutionExtractor.SPSInfo spsInfo = HEVCResolutionExtractor.extractSPSInfo(data);
-        if (spsInfo == null || spsInfo.width <= 0 || spsInfo.height <= 0) {
-            throw new IOException("Could not extract valid SPS info (including resolution) from HEVC stream for URI: " + inputUri);
+        int levelIdc = spsInfo.levelIdc;
+        int androidLevel = -1;
+        if (levelIdc <= 30) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel1;
+        else if (levelIdc <= 60 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel2;
+        else if (levelIdc <= 63 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel21;
+        else if (levelIdc <= 90 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel3;
+        else if (levelIdc <= 93 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel31;
+        else if (levelIdc <= 120 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel4;
+        else if (levelIdc <= 123 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel41;
+        else if (levelIdc <= 150 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel5;
+        else if (levelIdc <= 153 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel51;
+        else if (levelIdc <= 156 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel52;
+        else if (levelIdc <= 180 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel6;
+        else if (levelIdc <= 183 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel61;
+        else if (levelIdc <= 186 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel62;
+        else { Log.w(TAG, logTagPrefix + "Unmapped HEVC level_idc: " + levelIdc + " to a MediaCodecInfo.CodecProfileLevel constant."); }
+
+        if (androidLevel != -1) {
+            format.setInteger(MediaFormat.KEY_LEVEL, androidLevel);
+            Log.d(TAG, logTagPrefix + "Set KEY_LEVEL to: " + androidLevel + " (from levelIdc: " + levelIdc + ")");
+        } else {
+            Log.w(TAG, logTagPrefix + "KEY_LEVEL will not be set for level_idc " + levelIdc);
         }
-        int actualWidth = spsInfo.width;
-        int actualHeight = spsInfo.height;
-
-        final int MAX_REASONABLE_DIMENSION = 8192;
-        final long MAX_REASONABLE_PIXELS = (long)MAX_REASONABLE_DIMENSION * MAX_REASONABLE_DIMENSION;
-        if (actualWidth > MAX_REASONABLE_DIMENSION || actualHeight > MAX_REASONABLE_DIMENSION ||
-                (long)actualWidth * actualHeight > MAX_REASONABLE_PIXELS) {
-            String resolutionMsg = "Video resolution (" + actualWidth + "x" + actualHeight + ")";
-            Log.w(TAG, resolutionMsg + " exceeds reasonable limits for URI: " + inputUri + ". Decode attempt will be skipped.");
-            throw new IOException(resolutionMsg + " is not supported or exceeds practical limits.");
-        }
-
-        List<byte[]> nalUnitsWithStartCodes = new ArrayList<>(); // To find VPS/SPS/PPS with start codes
-        int tempOffset = 0;
-        while(tempOffset < data.length) {
-            int nextSC = -1;
-            for (int j = tempOffset + 3; j < data.length - 3; j++) {
-                if (data[j] == 0 && data[j+1] == 0 && (data[j+2] == 1 || (data[j+2] == 0 && j+3 < data.length && data[j+3] == 1))) {
-                    nextSC = j;
-                    break;
-                }
-            }
-            if (nextSC == -1) {
-                nalUnitsWithStartCodes.add(Arrays.copyOfRange(data, tempOffset, data.length));
-                break;
-            } else {
-                nalUnitsWithStartCodes.add(Arrays.copyOfRange(data, tempOffset, nextSC));
-                tempOffset = nextSC;
-            }
-        }
-        Log.i(TAG, "NAL count (with start codes, for CSD extraction) from URI " + inputUri + ": " + nalUnitsWithStartCodes.size());
+        format.setInteger(MediaFormat.KEY_FRAME_RATE, 30);
+        Log.i(TAG, logTagPrefix + "Final MediaFormat: " + format.toString());
+        return format;
+    }
 
 
-        byte[] vps = null, spsByteArr = null, pps = null;
-        for (byte[] nal : nalUnitsWithStartCodes) { // Use original NALs with start codes for CSD
-            int offset = 0;
-            if (nal.length > 4 && nal[0]==0 && nal[1]==0 && nal[2]==0 && nal[3]==1) {
-                offset = 4;
-            } else if (nal.length > 3 && nal[0]==0 && nal[1]==0 && nal[2]==1) {
-                offset = 3;
-            }
-            if (nal.length <= offset) continue;
-
-            int header = nal[offset] & 0xFF;
-            int type = (header & 0x7E) >> 1;
-            if (type == 32) vps = nal; // VPS NAL unit (includes start code)
-            else if (type == 33) spsByteArr = nal; // SPS NAL unit (includes start code)
-            else if (type == 34) pps = nal; // PPS NAL unit (includes start code)
-            if (vps != null && spsByteArr != null && pps != null) break;
-        }
-
-        List<byte[]> nalUnitsForDecoding = splitAnnexB(data); // NAL units without start codes for queueing
-        Log.i(TAG, "NAL count (for decoding, without start codes) from URI " + inputUri + ": " + nalUnitsForDecoding.size());
-
-        String softwareDecoderName = findSoftwareDecoder(MIME);
-        List<String> decoderNamesToTry = new ArrayList<>();
-        decoderNamesToTry.add(null); // Try hardware decoder first by default
-        if (softwareDecoderName != null && !softwareDecoderName.isEmpty()) {
-            decoderNamesToTry.add(softwareDecoderName);
-        }
-
+    private void decodeInternal(List<byte[]> nalUnits, MediaFormat format, OutputStream fos,
+                                String initialDecoderName, String fallbackDecoderName, String logTagPrefix) throws IOException {
         MediaCodec codec = null;
         boolean decodeSuccess = false;
         Exception lastException = null;
-        boolean isHwAttempt = false; // Define here to use in the final log message
+
+        String[] decoderNamesToTry = fallbackDecoderName != null && !fallbackDecoderName.isEmpty() ?
+                new String[]{initialDecoderName, fallbackDecoderName} :
+                new String[]{initialDecoderName};
 
         for (String currentDecoderName : decoderNamesToTry) {
-            isHwAttempt = (currentDecoderName == null);
-            String logDecoderName = isHwAttempt ? "Default HW" : currentDecoderName;
-            Log.i(TAG, "Attempting to decode URI " + inputUri + " with " + logDecoderName + " decoder.");
+            boolean isHwAttempt = (currentDecoderName == null || currentDecoderName.isEmpty() || !currentDecoderName.toLowerCase().contains("software"));
+            String logDecoderName = (currentDecoderName == null || currentDecoderName.isEmpty()) ? "Default HW" : currentDecoderName;
 
-            try (OutputStream fos = context.getContentResolver().openOutputStream(outputUri)) {
-                if (fos == null) {
-                    throw new IOException("Failed to open OutputStream for output URI: " + outputUri);
+            Log.i(TAG, logTagPrefix + "Attempting to decode with " + logDecoderName + " decoder.");
+
+            // Variables for INFO_TRY_AGAIN_LATER logging
+            long lastTryAgainLogTime = System.currentTimeMillis();
+            int tryAgainContinuousCount = 0;
+
+            try {
+                codec = (currentDecoderName == null || currentDecoderName.isEmpty()) ?
+                        MediaCodec.createDecoderByType(MIME) :
+                        MediaCodec.createByCodecName(currentDecoderName);
+
+                MediaCodecInfo codecInfo = codec.getCodecInfo();
+                Log.i(TAG, logTagPrefix + logDecoderName + " selected: " + codecInfo.getName());
+                String[] supportedTypes = codecInfo.getSupportedTypes();
+                boolean mimeSupportedByInstance = false;
+                for(String type : supportedTypes) {
+                    if (type.equalsIgnoreCase(MIME)) {
+                        mimeSupportedByInstance = true;
+                        break;
+                    }
                 }
-
-                Log.d(TAG, "CSD Info for URI: " + inputUri + " (for " + logDecoderName + ")");
-                if (vps != null) {
-                    Log.d(TAG, "  VPS length: " + vps.length + " bytes. First 8 bytes: " + bytesToHex(vps, 8));
+                Log.d(TAG, logTagPrefix + logDecoderName + " (" + codecInfo.getName() + ") supports MIME types: " + Arrays.toString(supportedTypes) + ". Target MIME " + MIME + " directly supported by instance: " + mimeSupportedByInstance);
+                MediaCodecInfo.CodecCapabilities caps = null;
+                try {
+                    caps = codecInfo.getCapabilitiesForType(MIME);
+                } catch (IllegalArgumentException e) {
+                    Log.w(TAG, logTagPrefix + logDecoderName + " (" + codecInfo.getName() + ") threw IllegalArgumentException when getting capabilities for MIME type " + MIME, e);
+                }
+                if (caps != null) {
+                    int configuredProfile = format.getInteger(MediaFormat.KEY_PROFILE, -1);
+                    int configuredLevel = format.getInteger(MediaFormat.KEY_LEVEL, -1);
+                    Log.d(TAG, logTagPrefix + logDecoderName + " (" + codecInfo.getName() + ") Reported HEVC Capabilities: " + Arrays.toString(caps.profileLevels));
+                    boolean profileSupported = false;
+                    boolean levelSupportedEnough = false;
+                    for (MediaCodecInfo.CodecProfileLevel capProfileLevel : caps.profileLevels) {
+                        if (capProfileLevel.profile == configuredProfile) {
+                            profileSupported = true;
+                            if (capProfileLevel.level >= configuredLevel) {
+                                levelSupportedEnough = true;
+                                break;
+                            }
+                        }
+                    }
+                    Log.i(TAG, logTagPrefix + logDecoderName + " (" + codecInfo.getName() + ") - Configured Profile: " + configuredProfile + ", Configured Level: " + configuredLevel);
+                    Log.i(TAG, logTagPrefix + logDecoderName + " (" + codecInfo.getName() + ") - Reported Profile Support by Capabilities: " + profileSupported);
+                    Log.i(TAG, logTagPrefix + logDecoderName + " (" + codecInfo.getName() + ") - Reported Level Sufficient by Capabilities: " + levelSupportedEnough);
+                    if (!profileSupported) {
+                        Log.w(TAG, logTagPrefix + logDecoderName + " (" + codecInfo.getName() + "): Configured profile " + configuredProfile + " (expecting Main10=" + MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10 + ") is NOT listed in its capabilities for HEVC.");
+                    }
+                    if (profileSupported && !levelSupportedEnough) {
+                        Log.w(TAG, logTagPrefix + logDecoderName + " (" + codecInfo.getName() + "): Configured profile " + configuredProfile + " is supported, but configured level " + configuredLevel + " might be HIGHER than any reported level in capabilities for this profile.");
+                    }
+                    if (profileSupported && levelSupportedEnough) {
+                        Log.i(TAG, logTagPrefix + logDecoderName + " (" + codecInfo.getName() + "): Capabilities seem to support the configured HEVC profile (" + configuredProfile + ") and level (" + configuredLevel + ").");
+                    }
                 } else {
-                    Log.d(TAG, "  VPS is null or not found for this stream.");
-                }
-                if (spsByteArr != null) {
-                    Log.d(TAG, "  SPS length: " + spsByteArr.length + " bytes. First 8 bytes: " + bytesToHex(spsByteArr, 8));
-                } else {
-                    Log.d(TAG, "  SPS is null or not found for this stream.");
-                }
-                if (pps != null) {
-                    Log.d(TAG, "  PPS length: " + pps.length + " bytes. First 8 bytes: " + bytesToHex(pps, 8));
-                } else {
-                    Log.d(TAG, "  PPS is null or not found for this stream.");
+                    Log.w(TAG, logTagPrefix + logDecoderName + " (" + codecInfo.getName() + "): Could not get CodecCapabilities for HEVC MIME type (" + MIME + "). This is unexpected if the codec was selected for this type.");
                 }
 
-                if (spsInfo == null) { 
-                    Log.e(TAG, "  spsInfo is unexpectedly null here before format creation!");
-                    throw new IOException("SPSInfo is null, cannot configure decoder.");
-                }
-                 Log.d(TAG, "  SPS Extracted Info: width=" + spsInfo.width + ", height=" + spsInfo.height +
-                            ", profileIdc=" + spsInfo.profileIdc + ", levelIdc=" + spsInfo.levelIdc +
-                            ", chromaFormatIdc=" + spsInfo.chromaFormatIdc);
-                
-                MediaFormat format = MediaFormat.createVideoFormat(MIME, actualWidth, actualHeight);
-                if (vps != null) format.setByteBuffer("csd-0", ByteBuffer.wrap(vps));
-                if (spsByteArr != null) format.setByteBuffer("csd-1", ByteBuffer.wrap(spsByteArr));
-                if (pps != null) format.setByteBuffer("csd-2", ByteBuffer.wrap(pps));
-
-                int profileIdc = spsInfo.profileIdc;
-                int androidProfile = -1;
-                switch (profileIdc) {
-                    case 1: androidProfile = MediaCodecInfo.CodecProfileLevel.HEVCProfileMain; break;
-                    case 2: androidProfile = MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10; break;
-                    default: Log.w(TAG, "Unmapped HEVC profile_idc: " + profileIdc + " for KEY_PROFILE"); break;
-                }
-                if (androidProfile != -1) {
-                    format.setInteger(MediaFormat.KEY_PROFILE, androidProfile);
-                }
-
-                int levelIdc = spsInfo.levelIdc;
-                int androidLevel = -1;
-                if (levelIdc <= 30) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel1;
-                else if (levelIdc <= 60 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel2;
-                else if (levelIdc <= 63 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel21;
-                else if (levelIdc <= 90 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel3;
-                else if (levelIdc <= 93 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel31;
-                else if (levelIdc <= 120 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel4;
-                else if (levelIdc <= 123 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel41;
-                else if (levelIdc <= 150 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel5;
-                else if (levelIdc <= 153 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel51;
-                else if (levelIdc <= 156 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel52;
-                else if (levelIdc <= 180 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel6;
-                else if (levelIdc <= 183 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel61;
-                else if (levelIdc <= 186 && levelIdc % 3 == 0) androidLevel = MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel62;
-                else { Log.w(TAG, "Unmapped HEVC level_idc: " + levelIdc + " for KEY_LEVEL"); }
-
-                if (androidLevel != -1) {
-                    format.setInteger(MediaFormat.KEY_LEVEL, androidLevel);
-                }
-                
-                Log.i(TAG, "Final MediaFormat for " + logDecoderName + ": " + format.toString());
-
-                if (isHwAttempt) {
-                    codec = MediaCodec.createDecoderByType(MIME);
-                } else {
-                    codec = MediaCodec.createByCodecName(currentDecoderName);
-                }
-                Log.i(TAG, "Configuring " + logDecoderName + " codec with format: " + format);
+                Log.i(TAG, logTagPrefix + "Configuring " + logDecoderName + " codec with format: " + format);
                 codec.configure(format, null, null, 0);
                 codec.start();
 
                 MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-                boolean inputDone = false; 
-                boolean outputDone = false; 
+                boolean inputDone = false;
+                boolean outputDone = false;
+                boolean actualOutputEOSReceived = false;
                 int nalUnitIndex = 0;
                 long frameCountForPTS = 0;
-                long lastSuccessfulDequeueTime = System.currentTimeMillis();
-                boolean actualOutputEOSReceived = false;
+                long lastSuccessfulDequeueTime = System.currentTimeMillis(); // Used for stuck detection and TRY_AGAIN logging
 
                 while (!outputDone) {
+                    if (Thread.interrupted()) {
+                        Log.w(TAG, logTagPrefix + logDecoderName + " decode thread interrupted. Aborting.");
+                        throw new IOException(logTagPrefix + logDecoderName + " decode thread interrupted.");
+                    }
+
                     if (!inputDone) {
                         int inIndex = codec.dequeueInputBuffer(TIMEOUT_US);
                         if (inIndex >= 0) {
-                            if (nalUnitIndex < nalUnitsForDecoding.size()) {
-                                byte[] nal = nalUnitsForDecoding.get(nalUnitIndex++);
+                            if (nalUnitIndex < nalUnits.size()) {
+                                byte[] nal = nalUnits.get(nalUnitIndex++);
                                 ByteBuffer ib = codec.getInputBuffer(inIndex);
                                 if (ib != null) {
                                     ib.clear();
                                     ib.put(nal);
-                                    long pts = frameCountForPTS * 1000000L / 30; 
+                                    long pts = frameCountForPTS * 1000000L / 30;
                                     codec.queueInputBuffer(inIndex, 0, nal.length, pts, 0);
                                     frameCountForPTS++;
-                                }
+                                } else { Log.e(TAG, logTagPrefix + logDecoderName + " getInputBuffer returned null for index " + inIndex); }
                             } else {
-                                Log.i(TAG, "All NAL units queued for " + logDecoderName + ", sending EOS to input.");
+                                Log.i(TAG, logTagPrefix + "All NAL units ("+nalUnits.size()+") queued for " + logDecoderName + ", sending EOS to input.");
                                 codec.queueInputBuffer(inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
                                 inputDone = true;
                             }
+                            lastSuccessfulDequeueTime = System.currentTimeMillis(); // Reset stuck timer on successful input queue
+                            tryAgainContinuousCount = 0; // Reset tryAgain counter on successful input queue
                         }
                     }
 
                     int outIndex = codec.dequeueOutputBuffer(info, TIMEOUT_US);
                     switch (outIndex) {
                         case MediaCodec.INFO_OUTPUT_FORMAT_CHANGED:
-                            Log.i(TAG, logDecoderName + " output format changed. New format: " + codec.getOutputFormat());
+                            Log.i(TAG, logTagPrefix + logDecoderName + " output format changed. New format: " + codec.getOutputFormat());
                             lastSuccessfulDequeueTime = System.currentTimeMillis();
+                            tryAgainContinuousCount = 0; // Reset counter
                             break;
                         case MediaCodec.INFO_TRY_AGAIN_LATER:
+                            tryAgainContinuousCount++;
+                            long currentTime = System.currentTimeMillis();
+                            if (tryAgainContinuousCount <= 3 || (currentTime - lastTryAgainLogTime) >= TRY_AGAIN_LOG_INTERVAL_MS) {
+                                Log.d(TAG, logTagPrefix + logDecoderName +
+                                        " INFO_TRY_AGAIN_LATER. Continuous count: " + tryAgainContinuousCount +
+                                        ". Time since last successful dequeue/input: " + (currentTime - lastSuccessfulDequeueTime) + "ms. " +
+                                        "InputDone: " + inputDone);
+                                lastTryAgainLogTime = currentTime;
+                            }
                             break;
                         case MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED:
-                            Log.d(TAG, logDecoderName + " output buffers changed (deprecated behavior).");
+                            Log.d(TAG, logTagPrefix + logDecoderName + " output buffers changed (deprecated behavior).");
                             lastSuccessfulDequeueTime = System.currentTimeMillis();
+                            tryAgainContinuousCount = 0; // Reset counter
                             break;
                         default:
                             if (outIndex >= 0) {
-                                lastSuccessfulDequeueTime = System.currentTimeMillis(); 
-                                ByteBuffer ob = codec.getOutputBuffer(outIndex);
-                                Log.d(TAG, logDecoderName + " output buffer index: " + outIndex + ", size: " + info.size + ", flags: " + info.flags + ", offset: " + info.offset + ", presentationTimeUs: " + info.presentationTimeUs);
+                                lastSuccessfulDequeueTime = System.currentTimeMillis();
+                                tryAgainContinuousCount = 0; // Reset counter
 
+                                ByteBuffer ob = codec.getOutputBuffer(outIndex);
                                 if (ob != null) {
                                     if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
-                                        Log.d(TAG, logDecoderName + " skipping codec config buffer (flags: " + info.flags + ").");
+                                        Log.d(TAG, logTagPrefix + logDecoderName + " skipping codec config buffer.");
                                         codec.releaseOutputBuffer(outIndex, false);
-                                        continue; 
+                                        continue;
                                     }
-
                                     if (info.size > 0) {
                                         byte[] yuv = new byte[info.size];
                                         ob.position(info.offset);
                                         ob.limit(info.offset + info.size);
                                         ob.get(yuv);
-
-                                        Log.d(TAG, logDecoderName + " attempting to write " + yuv.length + " bytes to OutputStream.");
                                         fos.write(yuv);
-                                        Log.d(TAG, logDecoderName + " successfully wrote " + yuv.length + " bytes to OutputStream.");
                                     }
-                                    
-                                    codec.releaseOutputBuffer(outIndex, false); 
-
+                                    codec.releaseOutputBuffer(outIndex, false);
                                     if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                                        Log.i(TAG, logDecoderName + " output EOS reached.");
+                                        Log.i(TAG, logTagPrefix + logDecoderName + " output EOS reached.");
                                         outputDone = true;
                                         actualOutputEOSReceived = true;
                                     }
-                                } else {
-                                    Log.w(TAG, logDecoderName + " codec.getOutputBuffer(" + outIndex + ") returned null for index " + outIndex);
-                                }
-                            }
+                                } else { Log.w(TAG, logTagPrefix + logDecoderName + " getOutputBuffer returned null for index " + outIndex); }
+                            } else { Log.w(TAG, logTagPrefix + logDecoderName + " dequeueOutputBuffer returned unhandled " + outIndex); }
                             break;
                     }
-
                     if (!outputDone && (System.currentTimeMillis() - lastSuccessfulDequeueTime) > STUCK_TIMEOUT_MS) {
-                        Log.e(TAG, logDecoderName + " decoder seems to be stuck. Aborting after " + STUCK_TIMEOUT_MS + "ms");
-                        lastException = new IOException(logDecoderName + " decoder stuck after " + STUCK_TIMEOUT_MS + "ms without output.");
-                        outputDone = true; 
+                        Log.e(TAG, logTagPrefix + logDecoderName +
+                                " decoder seems to be stuck. Aborting after " + STUCK_TIMEOUT_MS + "ms. " +
+                                "InputDone: " + inputDone + ", OutputDone: " + outputDone +
+                                ", Last BufferInfo Flags (may be stale): " + info.flags +
+                                ", Continuous INFO_TRY_AGAIN_LATER count at timeout: " + tryAgainContinuousCount);
+                        lastException = new IOException(logTagPrefix + logDecoderName + " decoder stuck after " + STUCK_TIMEOUT_MS + "ms.");
+                        outputDone = true;
                     }
-                } 
-
-                if (lastException == null && actualOutputEOSReceived ) { 
-                    decodeSuccess = true;
-                    Log.i(TAG, "Successfully decoded URI " + inputUri + " with " + logDecoderName);
-                } else if (lastException != null) {
-                     Log.w(TAG, "Attempt with " + logDecoderName + " failed or was aborted.", lastException);
-                } else if (outputDone && !actualOutputEOSReceived) {
-                    Log.w(TAG, "Loop for " + logDecoderName + " ended (likely due to stuck detection) but EOS flag not set. OutputDone: " + outputDone);
                 }
 
+                if (lastException == null && actualOutputEOSReceived) {
+                    decodeSuccess = true;
+                    Log.i(TAG, logTagPrefix + "Successfully decoded with " + logDecoderName);
+                } else if (lastException != null) {
+                    Log.w(TAG, logTagPrefix + "Attempt with " + logDecoderName + " failed or was aborted.", lastException);
+                } else if (!actualOutputEOSReceived) {
+                    Log.w(TAG, logTagPrefix + logDecoderName + " loop ended but actual EOS flag was not received. OutputDone: "+outputDone + ", Last BufferInfo flags: " + info.flags);
+                    if(lastException == null) { // Should ideally be covered by the stuck detection exception
+                        lastException = new IOException(logTagPrefix + logDecoderName + " decoding loop ended without receiving EOS or a specific error.");
+                    }
+                }
 
+            } catch (MediaCodec.CodecException ce) {
+                Log.e(TAG, logTagPrefix + logDecoderName + " CodecException. Diag: " + ce.getDiagnosticInfo(), ce);
+                lastException = new IOException(logTagPrefix + logDecoderName + " CodecException: " + ce.getMessage(), ce);
             } catch (Exception e) {
-                Log.w(TAG, "Decoder configuration/operation failed for " + logDecoderName + " decoder. URI: " + inputUri, e);
-                lastException = e; 
+                Log.e(TAG, logTagPrefix + "Decoder failed for " + logDecoderName, e);
+                lastException = e;
             } finally {
                 if (codec != null) {
-                    try {
-                        codec.stop();
-                    } catch (IllegalStateException e) {
-                        Log.e(TAG, "Error stopping codec for " + logDecoderName, e);
-                    }
+                    try { codec.stop(); } catch (IllegalStateException e) { Log.e(TAG, logTagPrefix + "Error stopping codec for " + logDecoderName, e); }
                     codec.release();
                     codec = null;
                 }
             }
-
-            if (decodeSuccess) { 
-                break;
+            if (decodeSuccess) break;
+            if (currentDecoderName == initialDecoderName && decoderNamesToTry.length > 1) {
+                Log.i(TAG, logTagPrefix + "Attempt with " + logDecoderName + " failed. Trying fallback: " + decoderNamesToTry[1]);
             }
-        } 
+        }
 
         if (!decodeSuccess) {
-            String msg = "Decoding failed for URI: " + inputUri;
+            String msg = logTagPrefix + "All decode attempts failed.";
             if (lastException != null) {
-                // isHwAttempt here will reflect the last attempted decoder type
-                Log.e(TAG, msg + ". Last error from " + (isHwAttempt ? "hardware" : "software") + " attempt: " + lastException.getMessage(), lastException);
-                throw new IOException(msg + ". Last error: " + lastException.getMessage(), lastException);
+                Log.e(TAG, msg, lastException);
+                throw new IOException(msg + " Last error: " + lastException.getMessage(), lastException);
             } else {
-                Log.e(TAG, msg + " with no specific exception recorded (possibly all attempts failed cleanly or EOS not reached).");
+                Log.e(TAG, msg + " No specific exception recorded.");
                 throw new IOException(msg + ".");
             }
         }
     }
 
 
-    // Original method for path-based decoding - keep for now if needed, or remove if fully migrated to URI
-    public void decodeToYuv(String inputPath, String outputPath) throws IOException {
+    public void decodeUriToUri(Context context, Uri inputUri, Uri outputUri) throws IOException {
+        String logPrefix = "decodeUriToUri (" + inputUri.getLastPathSegment() + "): ";
+        Log.i(TAG, logPrefix + "Starting decode from " + inputUri + " to " + outputUri);
         byte[] data;
-        try (FileInputStream fis = new FileInputStream(inputPath)) {
+        try (InputStream inputStream = context.getContentResolver().openInputStream(inputUri)) {
+            if (inputStream == null) throw new IOException(logPrefix + "Unable to open input stream from URI.");
             ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
-            byte[] buffer = new byte[1024*4];
+            byte[] buffer = new byte[1024 * 8];
             int bytesRead;
-            while((bytesRead = fis.read(buffer)) != -1) {
-                byteStream.write(buffer, 0, bytesRead);
-            }
+            while ((bytesRead = inputStream.read(buffer)) != -1) byteStream.write(buffer, 0, bytesRead);
             data = byteStream.toByteArray();
         }
+        if (data.length == 0) throw new IOException(logPrefix + "Input data from URI is empty.");
 
         HEVCResolutionExtractor.SPSInfo spsInfo = HEVCResolutionExtractor.extractSPSInfo(data);
         if (spsInfo == null || spsInfo.width <= 0 || spsInfo.height <= 0) {
-            throw new IOException("Could not extract valid SPS info (including resolution) from HEVC file.");
+            throw new IOException(logPrefix + "Could not extract valid SPS info.");
         }
-        int actualWidth = spsInfo.width;
-        int actualHeight = spsInfo.height;
+        Log.i(TAG, logPrefix + "Extracted SPS Info: " + spsInfo);
 
-        Log.w(TAG, "decodeToYuv(String, String) is using a simplified decoder setup. Consider aligning with decodeUriToUri for full features.");
-
-        List<byte[]> nalUnitsWithStartCodes = new ArrayList<>();
-        int tempOffset = 0;
-        while(tempOffset < data.length) {
-            int nextSC = -1;
-            for (int j = tempOffset + 3; j < data.length - 3; j++) {
-                if (data[j] == 0 && data[j+1] == 0 && (data[j+2] == 1 || (data[j+2] == 0 && j+3 < data.length && data[j+3] == 1))) {
-                    nextSC = j;
-                    break;
-                }
-            }
-            if (nextSC == -1) {
-                nalUnitsWithStartCodes.add(Arrays.copyOfRange(data, tempOffset, data.length));
-                break;
-            } else {
-                nalUnitsWithStartCodes.add(Arrays.copyOfRange(data, tempOffset, nextSC));
-                tempOffset = nextSC;
-            }
-        }
+        List<byte[]> nalUnits = splitAnnexB(data);
+        if (nalUnits.isEmpty()) throw new IOException(logPrefix + "No NAL units found.");
+        Log.i(TAG, logPrefix + "Split into " + nalUnits.size() + " NAL units (with start codes).");
 
         byte[] vps = null, spsByteArr = null, pps = null;
-        for (byte[] nal : nalUnitsWithStartCodes) {
-            int offset = 0;
-            if (nal.length > 4 && nal[0]==0 && nal[1]==0 && nal[2]==0 && nal[3]==1) offset = 4;
-            else if (nal.length > 3 && nal[0]==0 && nal[1]==0 && nal[2]==1) offset = 3;
-            if (nal.length <= offset) continue;
+        for (byte[] nal : nalUnits) {
+            if (nal.length < 4) continue;
+            int offset = (nal[2] == 1) ? 3 : ((nal[2] == 0 && nal[3] == 1) ? 4 : 0);
+            if (offset == 0 || nal.length <= offset) continue;
             int type = (nal[offset] & 0x7E) >> 1;
-            if (type == 32) vps = nal; else if (type == 33) spsByteArr = nal; else if (type == 34) pps = nal;
+            if (type == 32 && vps == null) { vps = nal; Log.d(TAG, logPrefix + "Found VPS, length " + nal.length); }
+            else if (type == 33 && spsByteArr == null) { spsByteArr = nal; Log.d(TAG, logPrefix + "Found SPS, length " + nal.length); }
+            else if (type == 34 && pps == null) { pps = nal; Log.d(TAG, logPrefix + "Found PPS, length " + nal.length); }
             if (vps != null && spsByteArr != null && pps != null) break;
         }
         if (vps == null || spsByteArr == null || pps == null) {
-            throw new IOException("Missing VPS/SPS/PPS in bitstream: " + inputPath);
+            String missing = (vps == null ? "VPS " : "") + (spsByteArr == null ? "SPS " : "") + (pps == null ? "PPS " : "");
+            throw new IOException(logPrefix + "Missing CSD NAL units: " + missing.trim());
         }
 
-        List<byte[]> nalUnitsForDecoding = splitAnnexB(data); 
+        MediaFormat format = createMediaFormat(vps, spsByteArr, pps, spsInfo, logPrefix);
+        String softwareDecoderName = findSoftwareDecoder(MIME);
+
+        try (OutputStream fos = context.getContentResolver().openOutputStream(outputUri)) {
+            if (fos == null) throw new IOException(logPrefix + "Failed to open OutputStream for output URI.");
+            decodeInternal(nalUnits, format, fos, null, softwareDecoderName, logPrefix);
+        }
+    }
+
+    public void decodeToYuv(String inputPath, String outputPath) throws IOException {
+        String logPrefix = "decodeToYuv (" + new File(inputPath).getName() + "): ";
+        Log.i(TAG, logPrefix + "Starting decode from file " + inputPath + " to " + outputPath);
+        byte[] data;
+        try (FileInputStream fis = new FileInputStream(inputPath)) {
+            ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
+            byte[] buffer = new byte[1024 * 8];
+            int bytesRead;
+            while ((bytesRead = fis.read(buffer)) != -1) byteStream.write(buffer, 0, bytesRead);
+            data = byteStream.toByteArray();
+        }
+        if (data.length == 0) throw new IOException(logPrefix + "Input file data is empty.");
+
+        HEVCResolutionExtractor.SPSInfo spsInfo = HEVCResolutionExtractor.extractSPSInfo(data);
+        if (spsInfo == null || spsInfo.width <= 0 || spsInfo.height <= 0) {
+            throw new IOException(logPrefix + "Could not extract valid SPS info from file.");
+        }
+        Log.i(TAG, logPrefix + "Extracted SPS Info: " + spsInfo);
+
+        List<byte[]> nalUnits = splitAnnexB(data);
+        if (nalUnits.isEmpty()) throw new IOException(logPrefix + "No NAL units found in file.");
+        Log.i(TAG, logPrefix + "Split into " + nalUnits.size() + " NAL units (with start codes).");
+
+        byte[] vps = null, spsByteArr = null, pps = null;
+        for (byte[] nal : nalUnits) {
+            if (nal.length < 4) continue;
+            int offset = (nal[2] == 1) ? 3 : ((nal[2] == 0 && nal[3] == 1) ? 4 : 0);
+            if (offset == 0 || nal.length <= offset) continue;
+            int type = (nal[offset] & 0x7E) >> 1;
+            if (type == 32 && vps == null) { vps = nal; Log.d(TAG, logPrefix + "Found VPS, length " + nal.length); }
+            else if (type == 33 && spsByteArr == null) { spsByteArr = nal; Log.d(TAG, logPrefix + "Found SPS, length " + nal.length); }
+            else if (type == 34 && pps == null) { pps = nal; Log.d(TAG, logPrefix + "Found PPS, length " + nal.length); }
+            if (vps != null && spsByteArr != null && pps != null) break;
+        }
+        if (vps == null || spsByteArr == null || pps == null) {
+            String missing = (vps == null ? "VPS " : "") + (spsByteArr == null ? "SPS " : "") + (pps == null ? "PPS " : "");
+            throw new IOException(logPrefix + "Missing CSD NAL units from file: " + missing.trim());
+        }
+
+        MediaFormat format = createMediaFormat(vps, spsByteArr, pps, spsInfo, logPrefix);
+        String softwareDecoderName = findSoftwareDecoder(MIME);
 
         File outputFile = new File(outputPath);
-         File parentDir = outputFile.getParentFile();
-         if (parentDir != null && !parentDir.exists()) {
-             if (!parentDir.mkdirs()) {
-                 Log.w(TAG, "Failed to create output parent directory for path-based decode: " + parentDir.getAbsolutePath());
-             }
-         }
+        File parentDir = outputFile.getParentFile();
+        if (parentDir != null && !parentDir.exists()) {
+            if (!parentDir.mkdirs()) Log.w(TAG, logPrefix + "Failed to create output parent directory: " + parentDir.getAbsolutePath());
+        }
 
-
-        MediaCodec codec = null;
         try (FileOutputStream fos = new FileOutputStream(outputFile)) {
-            MediaFormat format = MediaFormat.createVideoFormat(MIME, actualWidth, actualHeight);
-            format.setByteBuffer("csd-0", ByteBuffer.wrap(vps));
-            format.setByteBuffer("csd-1", ByteBuffer.wrap(spsByteArr));
-            format.setByteBuffer("csd-2", ByteBuffer.wrap(pps));
-
-            if (spsInfo.profileIdc == 1) format.setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain);
-            // Example: if (spsInfo.levelIdc == 93) format.setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel31); 
-            // Proper level mapping should be here if this method is to be robust
-
-
-            Log.i(TAG, "Configuring codec for path-based decode with format: " + format);
-            codec = MediaCodec.createDecoderByType(MIME); 
-            codec.configure(format, null, null, 0);
-            codec.start();
-
-            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-            boolean inputDone = false; 
-            boolean outputDone = false; 
-            int nalUnitIndex = 0;
-            long frameCountForPTS = 0;
-            // No STUCK_TIMEOUT in this simplified legacy method
-
-            while (!outputDone) {
-                if (!inputDone) {
-                    int inIndex = codec.dequeueInputBuffer(TIMEOUT_US);
-                    if (inIndex >= 0) {
-                        if (nalUnitIndex < nalUnitsForDecoding.size()) {
-                            byte[] nal = nalUnitsForDecoding.get(nalUnitIndex++);
-                            ByteBuffer ib = codec.getInputBuffer(inIndex);
-                            if (ib != null) {
-                                ib.clear();
-                                ib.put(nal);
-                                long pts = frameCountForPTS * 1000000L / 30; 
-                                codec.queueInputBuffer(inIndex, 0, nal.length, pts, 0);
-                                frameCountForPTS++;
-                            }
-                        } else {
-                            codec.queueInputBuffer(inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
-                            inputDone = true;
-                        }
-                    }
-                }
-
-                int outIndex = codec.dequeueOutputBuffer(info, TIMEOUT_US);
-                switch (outIndex) {
-                    case MediaCodec.INFO_OUTPUT_FORMAT_CHANGED: 
-                        Log.i(TAG, "Path decode: format changed: " + codec.getOutputFormat()); 
-                        break;
-                    case MediaCodec.INFO_TRY_AGAIN_LATER: 
-                        break; 
-                    default:
-                        if (outIndex >= 0) {
-                            if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
-                                Log.d(TAG, "Path decode: skipping CSD");
-                                codec.releaseOutputBuffer(outIndex, false);
-                                continue; 
-                            }
-                            
-                            ByteBuffer ob = codec.getOutputBuffer(outIndex);
-                            if (ob != null && info.size > 0) {
-                                byte[] yuvData = new byte[info.size];
-                                ob.position(info.offset); 
-                                ob.limit(info.offset + info.size); 
-                                ob.get(yuvData);
-                                fos.write(yuvData);
-                            }
-                            codec.releaseOutputBuffer(outIndex, false);
-                            if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                                outputDone = true;
-                            }
-                        }
-                        break;
-                }
-            } 
-            Log.i(TAG, "Path-based decoding finished for: " + inputPath);
-
-        } catch (Exception e) {
-            Log.e(TAG, "Error during path-based decoding of " + inputPath, e);
-            throw new IOException("Failed to decode " + inputPath, e);
-        } finally {
-            if (codec != null) {
-                try { codec.stop(); } catch (Exception e) {/*ignore*/}
-                codec.release();
-            }
+            decodeInternal(nalUnits, format, fos, null, softwareDecoderName, logPrefix);
         }
     }
 }
