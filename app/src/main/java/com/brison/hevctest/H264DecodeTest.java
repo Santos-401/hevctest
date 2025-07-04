@@ -124,17 +124,32 @@ public class H264DecodeTest {
         File outDir = new File(outputDirPath);
         if (!outDir.exists()) outDir.mkdirs();
         File hwOut = new File(outDir, inputFile.getName() + ".yuv");
+        File swOut = new File(outDir, inputFile.getName() + "_sw.yuv"); // For software output
 
-        // 5. ハードウェアデコーダでトライ
-        String hwCodec = selectHardwareCodecName(width, height);
-        try {
-            return decodeWithCodec(nals, format, hwCodec, hwOut);
-        } catch (Exception e) {
-            Log.w(TAG, "Hardware decode failed, fallback to software: " + hwCodec, e);
-            // フォールバック
+        // --- TEMPORARY MODIFICATION FOR TESTING BA3_SVA_C.264 ---
+        if (inputFile.getName().equals("BA3_SVA_C.264")) {
+            Log.i(TAG, "Forcing software decoder for BA3_SVA_C.264");
             String swCodec = selectSoftwareCodecName();
-            File swOut = new File(outDir, inputFile.getName() + "_sw.yuv");
-            return decodeWithCodec(nals, format, swCodec, swOut);
+            Log.i(TAG, "Attempting BA3_SVA_C.264 with software codec: " + swCodec);
+            try {
+                // Use swOut for software decoder output to differentiate
+                return decodeWithCodec(nals, format, swCodec, swOut);
+            } catch (Exception e) {
+                Log.e(TAG, "Software decode failed for BA3_SVA_C.264 with " + swCodec, e);
+                throw e; // Re-throw if software also fails catastrophically
+            }
+        } else {
+            // Original logic for other files
+            // 5. ハードウェアデコーダでトライ
+            String hwCodec = selectHardwareCodecName(width, height);
+            try {
+                return decodeWithCodec(nals, format, hwCodec, hwOut);
+            } catch (Exception e) {
+                Log.w(TAG, "Hardware decode failed for " + inputFile.getName() + " with " + hwCodec + ", fallback to software", e);
+                // フォールバック
+                String swCodec = selectSoftwareCodecName();
+                return decodeWithCodec(nals, format, swCodec, swOut);
+            }
         }
     }
 
@@ -227,27 +242,42 @@ public class H264DecodeTest {
                             break;
                         default:
                             if (outIndex < 0) {
-                                Log.w(TAG, "H.264: dequeueOutputBuffer returned an unexpected index: " + outIndex);
+                                // This case is already handled by INFO_TRY_AGAIN_LATER, INFO_OUTPUT_FORMAT_CHANGED etc.
+                                // but as a safeguard for other negative values:
+                                Log.w(TAG, "H.264: dequeueOutputBuffer returned unexpected negative index: " + outIndex);
                                 break;
                             }
+
+                            // Log details for every valid output buffer index
+                            Log.d(TAG, "H.264: Output buffer available. Index: " + outIndex + ", Size: " + info.size + ", Flags: " + info.flags + ", PTS: " + info.presentationTimeUs);
+
                             if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
-                                Log.d(TAG, "H.264: Skipping codec config buffer.");
+                                Log.i(TAG, "H.264: Codec config buffer received. Releasing.");
                                 decoder.releaseOutputBuffer(outIndex, false);
                                 break;
                             }
+
                             ByteBuffer outBuf = decoder.getOutputBuffer(outIndex);
-                            if (outBuf != null && info.size > 0) {
-                                byte[] yuvData = new byte[info.size];
-                                outBuf.get(yuvData);
-                                fos.write(yuvData);
-                                frameCount.incrementAndGet();
-                            } else if (outBuf == null && info.size > 0){
-                                Log.w(TAG, "H.264: Output buffer was null for index " + outIndex + " but info.size was " + info.size);
+
+                            if (info.size > 0) {
+                                if (outBuf != null) {
+                                    byte[] yuvData = new byte[info.size];
+                                    outBuf.get(yuvData);
+                                    fos.write(yuvData);
+                                    int currentFrameCount = frameCount.incrementAndGet();
+                                    Log.i(TAG, "H.264: Wrote frame " + currentFrameCount + ", " + info.size + " bytes of YUV data, PTS: " + info.presentationTimeUs);
+                                } else {
+                                    // This case should ideally not happen if info.size > 0
+                                    Log.e(TAG, "H.264: Output buffer was null for index " + outIndex + " but info.size was " + info.size);
+                                }
+                            } else {
+                                Log.d(TAG, "H.264: Output buffer has size 0. Index: " + outIndex);
                             }
+
                             decoder.releaseOutputBuffer(outIndex, false);
 
                             if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                                Log.i(TAG, "H.264: Output EOS reached.");
+                                Log.i(TAG, "H.264: Output EOS flag received.");
                                 outputEOS = true;
                             }
                             break;
