@@ -76,16 +76,20 @@ public class H264DecodeTest {
         Log.i(TAG, "Resolution for URI " + inputUri + ": " + width + "x" + height);
 
         MediaFormat format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height);
-        byte[] spsData = csd[0];
-        byte[] ppsData = csd[1];
+        byte[] spsData = csd[0]; // This is the full NAL unit including start code
+        byte[] ppsData = csd[1]; // This is the full NAL unit including start code
 
-        int spsOffset = getStartCodeOffset(spsData, "SPS for URI " + inputUri);
-        format.setByteBuffer("csd-0", ByteBuffer.wrap(spsData, spsOffset, spsData.length - spsOffset));
-        Log.d(TAG, "Set csd-0 for URI " + inputUri + " with offset: " + spsOffset + ", length: " + (spsData.length - spsOffset));
+        // For MediaFormat CSD, it's common to pass without the start code.
+        // However, when queuing as input buffers with BUFFER_FLAG_CODEC_CONFIG,
+        // the start code is usually expected by the decoder.
+        // The current getStartCodeOffset and then wrapping is correct for MediaFormat.
+        int spsContentOffset = getStartCodeOffset(spsData, "SPS for URI " + inputUri);
+        format.setByteBuffer("csd-0", ByteBuffer.wrap(spsData, spsContentOffset, spsData.length - spsContentOffset));
+        Log.d(TAG, "Set csd-0 for URI " + inputUri + " with offset: " + spsContentOffset + ", length: " + (spsData.length - spsContentOffset));
 
-        int ppsOffset = getStartCodeOffset(ppsData, "PPS for URI " + inputUri);
-        format.setByteBuffer("csd-1", ByteBuffer.wrap(ppsData, ppsOffset, ppsData.length - ppsOffset));
-        Log.d(TAG, "Set csd-1 for URI " + inputUri + " with offset: " + ppsOffset + ", length: " + (ppsData.length - ppsOffset));
+        int ppsContentOffset = getStartCodeOffset(ppsData, "PPS for URI " + inputUri);
+        format.setByteBuffer("csd-1", ByteBuffer.wrap(ppsData, ppsContentOffset, ppsData.length - ppsContentOffset));
+        Log.d(TAG, "Set csd-1 for URI " + inputUri + " with offset: " + ppsContentOffset + ", length: " + (ppsData.length - ppsContentOffset));
 
         try (OutputStream finalOutputStream = context.getContentResolver().openOutputStream(outputUri)) {
             if (finalOutputStream == null) {
@@ -160,16 +164,16 @@ public class H264DecodeTest {
         Log.i(TAG, "Resolution for file " + inputPath + ": " + width + "x" + height);
 
         MediaFormat format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height);
-        byte[] spsData = csd[0];
-        byte[] ppsData = csd[1];
+        byte[] spsData = csd[0]; // Full NAL unit
+        byte[] ppsData = csd[1]; // Full NAL unit
 
-        int spsOffset = getStartCodeOffset(spsData, "SPS for file " + inputPath);
-        format.setByteBuffer("csd-0", ByteBuffer.wrap(spsData, spsOffset, spsData.length - spsOffset));
-        Log.d(TAG, "Set csd-0 for file " + inputPath + " with offset: " + spsOffset + ", length: " + (spsData.length - spsOffset));
+        int spsContentOffset = getStartCodeOffset(spsData, "SPS for file " + inputPath);
+        format.setByteBuffer("csd-0", ByteBuffer.wrap(spsData, spsContentOffset, spsData.length - spsContentOffset));
+        Log.d(TAG, "Set csd-0 for file " + inputPath + " with offset: " + spsContentOffset + ", length: " + (spsData.length - spsContentOffset));
 
-        int ppsOffset = getStartCodeOffset(ppsData, "PPS for file " + inputPath);
-        format.setByteBuffer("csd-1", ByteBuffer.wrap(ppsData, ppsOffset, ppsData.length - ppsOffset));
-        Log.d(TAG, "Set csd-1 for file " + inputPath + " with offset: " + ppsOffset + ", length: " + (ppsData.length - ppsOffset));
+        int ppsContentOffset = getStartCodeOffset(ppsData, "PPS for file " + inputPath);
+        format.setByteBuffer("csd-1", ByteBuffer.wrap(ppsData, ppsContentOffset, ppsData.length - ppsContentOffset));
+        Log.d(TAG, "Set csd-1 for file " + inputPath + " with offset: " + ppsContentOffset + ", length: " + (ppsData.length - ppsContentOffset));
 
         File outDir = new File(outputDirPath);
         if (!outDir.exists() && !outDir.mkdirs()) {
@@ -261,9 +265,16 @@ public class H264DecodeTest {
                             ByteBuffer ib = decoder.getInputBuffer(inIndex);
                             if (ib != null) {
                                 ib.clear();
-                                ib.put(nal);
-                                decoder.queueInputBuffer(inIndex, 0, nal.length, presentationTimeUs, 0);
-                                presentationTimeUs += 1000000L / 30; // 30 FPS assumption
+                                ib.put(nal); // nal already includes the start code
+                                int flags = 0;
+                                if (nalType == 7 || nalType == 8) { // SPS or PPS
+                                    flags |= MediaCodec.BUFFER_FLAG_CODEC_CONFIG;
+                                    Log.i(TAG, "H.264: Queuing NAL Type " + nalType + " with BUFFER_FLAG_CODEC_CONFIG. Length: " + nal.length);
+                                }
+                                decoder.queueInputBuffer(inIndex, 0, nal.length, presentationTimeUs, flags);
+                                if ((flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
+                                    presentationTimeUs += 1000000L / 30; // 30 FPS assumption, only for non-config frames
+                                }
                             } else {
                                 Log.e(TAG, "H.264: getInputBuffer returned null for index " + inIndex);
                             }
@@ -355,12 +366,12 @@ public class H264DecodeTest {
                 }
             } catch (Exception ignored) {}
         }
-         // Fallback to any HW decoder by type if specific size match failed for non-Google
+        // Fallback to any HW decoder by type if specific size match failed for non-Google
         for (MediaCodecInfo info : list.getCodecInfos()) {
             if (info.isEncoder()) continue;
             String name = info.getName();
             if (!name.toLowerCase().contains("avc.decoder") || name.toLowerCase().startsWith("omx.google.")) continue;
-             Log.d(TAG, "Trying less specific HW H.264 decoder: " + name);
+            Log.d(TAG, "Trying less specific HW H.264 decoder: " + name);
             return name; // Return first non-Google even if size not explicitly checked or supported
         }
         Log.w(TAG, "No specific non-Google HW H.264 decoder found for " + width + "x" + height + ". Fallback to MIME type (may pick SW or any HW).");
@@ -453,9 +464,9 @@ public class H264DecodeTest {
             if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
                 return i; // Found 001
             } else if (i + 4 <= data.length && data[i + 2] == 0 && data[i + 3] == 1) { // Found 0001 (ensure i+3 is a valid index)
-                 //This was "i + 4 < data.length" for data[i+3], should be data.length to include i+3
+                //This was "i + 4 < data.length" for data[i+3], should be data.length to include i+3
                 // Corrected: data[i] == 0 && data[i+1] == 0 && data[i+2] == 0 && data[i+3] == 1
-                 if (data[i] == 0 && data[i + 1] == 0 && data[i+2] == 0 && data[i+3] == 1 ) return i;
+                if (data[i] == 0 && data[i + 1] == 0 && data[i+2] == 0 && data[i+3] == 1 ) return i;
             }
         }
         return -1;

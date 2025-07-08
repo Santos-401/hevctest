@@ -107,6 +107,8 @@ public class HevcDecoder {
     private MediaFormat createMediaFormat(byte[] vps, byte[] spsByteArr, byte[] pps, HEVCResolutionExtractor.SPSInfo spsInfo, String logTagPrefix) {
         MediaFormat format = MediaFormat.createVideoFormat(MIME, spsInfo.width, spsInfo.height);
 
+        // It's generally recommended to provide CSD during configure for initial setup.
+        // We will also send them as flagged input buffers if they are part of the NAL unit list.
         if (vps != null) format.setByteBuffer("csd-0", ByteBuffer.wrap(vps));
         if (spsByteArr != null) format.setByteBuffer("csd-1", ByteBuffer.wrap(spsByteArr));
         if (pps != null) format.setByteBuffer("csd-2", ByteBuffer.wrap(pps));
@@ -141,10 +143,10 @@ public class HevcDecoder {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
             try {
-               format.setInteger(MediaFormat.KEY_OPERATING_RATE, Integer.MAX_VALUE);
-           } catch (Exception e) {
-               Log.w(TAG, logTagPrefix + "Failed to set KEY_OPERATING_RATE", e);
-           }
+                format.setInteger(MediaFormat.KEY_OPERATING_RATE, Integer.MAX_VALUE);
+            } catch (Exception e) {
+                Log.w(TAG, logTagPrefix + "Failed to set KEY_OPERATING_RATE", e);
+            }
         }
         // Log.i(TAG, logTagPrefix + "Final MediaFormat: " + format.toString()); // Keep if essential
         return format;
@@ -157,8 +159,8 @@ public class HevcDecoder {
         Exception lastException = null;
 
         String[] decoderNamesToTry = fallbackDecoderName != null && !fallbackDecoderName.isEmpty() ?
-                                     new String[]{initialDecoderName, fallbackDecoderName} :
-                                     new String[]{initialDecoderName};
+                new String[]{initialDecoderName, fallbackDecoderName} :
+                new String[]{initialDecoderName};
 
         for (String currentDecoderName : decoderNamesToTry) {
             String logDecoderName = (currentDecoderName == null || currentDecoderName.isEmpty()) ? "Default" : currentDecoderName;
@@ -204,15 +206,24 @@ public class HevcDecoder {
                                 if (ib != null) {
                                     ib.clear();
                                     ib.put(nal);
-                                    // Generate PTS if not present in bitstream, or use actual PTS
                                     long pts = frameCountForPTS * 1000000L / 30; // Assumes 30 FPS
-                                    codec.queueInputBuffer(inIndex, 0, nal.length, pts, 0);
-                                    frameCountForPTS++;
+                                    int flags = 0;
+                                    int nalType = getHevcNalUnitType(nal);
+
+                                    if (nalType == 32 || nalType == 33 || nalType == 34) { // VPS, SPS, PPS
+                                        flags |= MediaCodec.BUFFER_FLAG_CODEC_CONFIG;
+                                        Log.i(TAG, logTagPrefix + logDecoderName + " Queuing NAL Type " + nalType + " with BUFFER_FLAG_CODEC_CONFIG");
+                                    }
+                                    codec.queueInputBuffer(inIndex, 0, nal.length, pts, flags);
+                                    if ((flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
+                                        // Only increment frame/PTS count for non-config frames to avoid issues with some decoders
+                                        frameCountForPTS++;
+                                    }
                                 } else {
                                     Log.e(TAG, logTagPrefix + logDecoderName + " getInputBuffer returned null for index " + inIndex);
                                 }
                             } else {
-                                // Log.i(TAG, logTagPrefix + "All NAL units queued, sending EOS to input.");
+                                Log.i(TAG, logTagPrefix + logDecoderName + " All NAL units queued, sending EOS to input.");
                                 codec.queueInputBuffer(inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
                                 inputDone = true;
                             }
@@ -224,7 +235,7 @@ public class HevcDecoder {
                     int outIndex = codec.dequeueOutputBuffer(info, TIMEOUT_US);
                     switch (outIndex) {
                         case MediaCodec.INFO_OUTPUT_FORMAT_CHANGED:
-                            // Log.i(TAG, logTagPrefix + "Output format changed: " + codec.getOutputFormat());
+                            Log.i(TAG, logTagPrefix + logDecoderName + " Output format changed: " + codec.getOutputFormat());
                             lastSuccessfulDequeueTime = System.currentTimeMillis();
                             tryAgainContinuousCount = 0;
                             break;
@@ -233,7 +244,7 @@ public class HevcDecoder {
                             // Removed verbose logging for INFO_TRY_AGAIN_LATER
                             break;
                         case MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED:
-                             // Log.d(TAG, logTagPrefix + "Output buffers changed (deprecated).");
+                            // Log.d(TAG, logTagPrefix + "Output buffers changed (deprecated).");
                             lastSuccessfulDequeueTime = System.currentTimeMillis();
                             tryAgainContinuousCount = 0;
                             break;
@@ -357,7 +368,7 @@ public class HevcDecoder {
         for (byte[] nal : nalUnits) {
             if (nal.length < 4) continue; // Basic check for NAL header
             int offset = (nal[0] == 0 && nal[1] == 0 && nal[2] == 1) ? 3 :
-                         (nal[0] == 0 && nal[1] == 0 && nal[2] == 0 && nal[3] == 1) ? 4 : 0;
+                    (nal[0] == 0 && nal[1] == 0 && nal[2] == 0 && nal[3] == 1) ? 4 : 0;
             if (offset == 0 || nal.length <= offset) continue; // Not a valid start code or too short
 
             int type = (nal[offset] & 0x7E) >> 1; // Extract NAL unit type
@@ -410,8 +421,8 @@ public class HevcDecoder {
         byte[] vps = null, spsByteArr = null, pps = null;
         for (byte[] nal : nalUnits) {
             if (nal.length < 4) continue;
-             int offset = (nal[0] == 0 && nal[1] == 0 && nal[2] == 1) ? 3 :
-                         (nal[0] == 0 && nal[1] == 0 && nal[2] == 0 && nal[3] == 1) ? 4 : 0;
+            int offset = (nal[0] == 0 && nal[1] == 0 && nal[2] == 1) ? 3 :
+                    (nal[0] == 0 && nal[1] == 0 && nal[2] == 0 && nal[3] == 1) ? 4 : 0;
             if (offset == 0 || nal.length <= offset) continue;
 
             int type = (nal[offset] & 0x7E) >> 1;
@@ -442,5 +453,37 @@ public class HevcDecoder {
             decodeInternal(nalUnits, format, fos, null, softwareDecoderName, logPrefix); // Try HW first
         }
         Log.i(TAG, logPrefix + "Finished decode from " + inputPath + " to " + outputPath);
+    }
+
+    private int getHevcNalUnitType(byte[] nalUnit) {
+        if (nalUnit == null || nalUnit.length < 3) { // Minimum for a start code + NAL header byte
+            return -1; // Invalid or too short
+        }
+
+        int offset = 0;
+        // Find start of NAL unit payload (skip start code)
+        if (nalUnit[0] == 0x00 && nalUnit[1] == 0x00) {
+            if (nalUnit[2] == 0x01) { // 00 00 01
+                offset = 3;
+            } else if (nalUnit.length >= 4 && nalUnit[2] == 0x00 && nalUnit[3] == 0x01) { // 00 00 00 01
+                offset = 4;
+            } else {
+                return -2; // Start code not found or malformed
+            }
+        } else {
+            return -3; // Does not start with 00 00
+        }
+
+        if (nalUnit.length <= offset) {
+            return -4; // No data after start code
+        }
+
+        // The NAL unit header is 2 bytes for HEVC.
+        // forbidden_zero_bit (1 bit)
+        // nal_unit_type (6 bits)
+        // nuh_layer_id (6 bits)
+        // nuh_temporal_id_plus1 (3 bits)
+        // We need the nal_unit_type from the first byte of the NAL unit header.
+        return (nalUnit[offset] & 0x7E) >> 1;
     }
 }
