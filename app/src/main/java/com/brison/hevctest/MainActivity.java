@@ -37,6 +37,7 @@ import java.util.concurrent.Executors;
 
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "com.brison.hevctest"; // Changed example to hevctest
+    private FFmpegDecoder ffmpegDecoder; // FFmpegDecoderのインスタンスを追加
     private Button buttonRefreshFileList;
     private ListView listViewFiles;
     private ExecutorService executorService;
@@ -111,6 +112,14 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         Log.d(TAG, "onCreate started");
 
+        ffmpegDecoder = new FFmpegDecoder(); // FFmpegDecoderを初期化
+        // 必要であれば ffmpegDecoder.initFFmpeg(); を適切なタイミングで呼び出す
+        // (例: アプリケーション起動時やActivity作成時)
+        // 今回はJNIラッパーの initFFmpeg が実質何もしないので省略しても良いが、
+        // 将来的に初期化処理が必要になった場合のためにコメントで残しておく
+        // int initResult = ffmpegDecoder.initFFmpeg();
+        // Log.i(TAG, "FFmpeg init result: " + initResult);
+
         buttonRefreshFileList = findViewById(R.id.buttonListLocalFiles); // Ensure this ID is in your layout
         listViewFiles = findViewById(R.id.listViewLocalFiles); // Ensure this ID is in your layout
         buttonStartDecord = findViewById(R.id.startButton);
@@ -138,7 +147,7 @@ public class MainActivity extends AppCompatActivity {
             setProcessingState(true);
             executorService.execute(() -> {
                 try {
-                    processSelectedFiles();
+                    processSelectedFiles(); // This will now use FFmpeg
                     mainHandler.post(() -> Toast.makeText(MainActivity.this, "処理が完了しました", Toast.LENGTH_SHORT).show());
                 } catch (IOException e) {
                     Log.e(TAG, "デコード処理中にエラーが発生", e);
@@ -156,6 +165,20 @@ public class MainActivity extends AppCompatActivity {
         listInternalFiles(); // Initial listing from internal storage
         buttonStartDecord.setEnabled(!currentFiles.isEmpty());
         Log.d(TAG, "onCreate finished");
+    }
+
+    @Override
+    protected void onDestroy() { // ★ スレッド停止処理を追加
+        super.onDestroy();
+        if (executorService != null && !executorService.isShutdown()) {
+            executorService.shutdown();
+        }
+        // 必要であれば ffmpegDecoder.releaseFFmpeg(); を適切なタイミングで呼び出す
+        // (例: アプリケーション終了時やActivity破棄時)
+        // if (ffmpegDecoder != null) {
+        //     ffmpegDecoder.releaseFFmpeg();
+        //     Log.i(TAG, "FFmpeg released.");
+        // }
     }
 
     private void launchUsbDirectorySelection() {
@@ -319,22 +342,12 @@ public class MainActivity extends AppCompatActivity {
         if (executorService != null && !executorService.isShutdown()) {
             executorService.shutdown();
         }
-    }
-
-    // ★ ヘルパー関数: MediaExtractor から最初のビデオトラックを探す
-    private int selectVideoTrack(MediaExtractor extractor) {
-        int numTracks = extractor.getTrackCount();
-        for (int i = 0; i < numTracks; i++) {
-            MediaFormat format = extractor.getTrackFormat(i);
-            String mime = format.getString(MediaFormat.KEY_MIME);
-            if (mime != null && mime.startsWith("video/")) {
-                // H.264 (AVC) であることを確認 (オプション)
-                // if (mime.equalsIgnoreCase(MediaFormat.MIMETYPE_VIDEO_AVC)) {
-                return i;
-                // }
-            }
-        }
-        return -1; // ビデオトラックが見つからない場合
+        // 必要であれば ffmpegDecoder.releaseFFmpeg(); を適切なタイミングで呼び出す
+        // (例: アプリケーション終了時やActivity破棄時)
+        // if (ffmpegDecoder != null) {
+        //     ffmpegDecoder.releaseFFmpeg();
+        //     Log.i(TAG, "FFmpeg released.");
+        // }
     }
 
     private void processSelectedFiles() throws IOException {
@@ -351,7 +364,7 @@ public class MainActivity extends AppCompatActivity {
             if (rootDir == null || !rootDir.isDirectory() || !rootDir.canWrite()) {
                 throw new IOException("USBルートディレクトリに書き込めません: " + usbTreeUri);
             }
-            String resultFolderName = "result_usb";
+            String resultFolderName = "result_usb_ffmpeg"; // フォルダ名を変更して区別
             outputParentDirDocFile = rootDir.findFile(resultFolderName);
             if (outputParentDirDocFile == null) {
                 outputParentDirDocFile = rootDir.createDirectory(resultFolderName);
@@ -361,15 +374,15 @@ public class MainActivity extends AppCompatActivity {
             } else if (!outputParentDirDocFile.isDirectory()) {
                 throw new IOException("USBの '" + resultFolderName + "' はディレクトリではありません。");
             }
-            Log.i(TAG, "USB出力ディレクトリ: " + outputParentDirDocFile.getUri());
+            Log.i(TAG, "USB出力ディレクトリ (FFmpeg): " + outputParentDirDocFile.getUri());
         } else { // Processing internal files
             File internalAppDir = getFilesDir();
-            File internalResultDir = new File(internalAppDir, "result");
+            File internalResultDir = new File(internalAppDir, "result_ffmpeg"); // フォルダ名を変更
             if (!internalResultDir.exists() && !internalResultDir.mkdirs()) {
-                throw new IOException("内部ストレージに 'result_internal' ディレクトリを作成できませんでした。");
+                throw new IOException("内部ストレージに 'result_ffmpeg' ディレクトリを作成できませんでした。");
             }
             internalOutputParentDirPath = internalResultDir.getAbsolutePath();
-            Log.i(TAG, "内部出力ディレクトリ: " + internalOutputParentDirPath);
+            Log.i(TAG, "内部出力ディレクトリ (FFmpeg): " + internalOutputParentDirPath);
         }
 
         for (DocumentFileWrapper wrapper : currentFiles) {
@@ -379,8 +392,20 @@ public class MainActivity extends AppCompatActivity {
                 continue;
             }
             String outputFileName = inputFileName + ".yuv"; // Basic naming convention
+            String codecName = ""; // "h264" or "hevc"
+
+            if (inputFileName.endsWith(".264") || inputFileName.endsWith(".h264") || inputFileName.endsWith(".avc") || inputFileName.endsWith(".jsv") || inputFileName.endsWith(".jvt")|| inputFileName.endsWith(".26l")) {
+                codecName = "h264";
+            } else if (inputFileName.endsWith(".bit") || inputFileName.endsWith(".bin") || inputFileName.endsWith(".hevc") || inputFileName.endsWith(".h265")) { // .hevc と .h265 も追加
+                codecName = "hevc";
+            } else {
+                Log.w(TAG, "Unsupported file extension for FFmpeg processing: " + inputFileName);
+                updateStatusOnUiThread("未対応の拡張子: " + inputFileName);
+                continue;
+            }
 
             try {
+                boolean success = false;
                 if (wrapper.isUsbFile()) {
                     if (outputParentDirDocFile == null) throw new IOException("USB出力ディレクトリがありません。");
                     Uri inputFileUri = wrapper.getUri();
@@ -401,16 +426,14 @@ public class MainActivity extends AppCompatActivity {
                     }
                     Uri outputFileUri = outputFileDoc.getUri();
 
-                    Log.i(TAG, "Processing USB: " + inputFileName + " -> " + outputFileName);
-                    if (inputFileName.endsWith(".264") || inputFileName.endsWith(".h264") || inputFileName.endsWith(".avc") || inputFileName.endsWith(".jsv") || inputFileName.endsWith(".jvt")|| inputFileName.endsWith(".26l")) {
-                        // This will be changed to a method that accepts streams/URIs
-                        H264DecodeTest.decodeStreamToStream(this, inputFileUri, outputFileUri); // Target method
-                    } else if (inputFileName.endsWith(".bit") || inputFileName.endsWith(".bin")) {
-                        HevcDecoder decoder = new HevcDecoder();
-                        // This will be changed to a method that accepts streams/URIs
-                        decoder.decodeUriToUri(this, inputFileUri, outputFileUri); // Target method
+                    Log.i(TAG, "FFmpeg Processing USB: " + inputFileName + " -> " + outputFileName + " with codec " + codecName);
+                    success = ffmpegDecoder.decodeVideoUri(this, inputFileUri, outputFileUri, codecName);
+
+                    if (!success) { // If decodeUri fails, delete the potentially empty/corrupt output file
+                        Log.w(TAG, "FFmpeg decodeVideoUri failed for " + inputFileName + ". Deleting output file.");
+                        outputFileDoc.delete();
                     }
-                    updateStatusOnUiThread(inputFileName + " -> " + outputFileName + " [USB] 完了");
+                    updateStatusOnUiThread(inputFileName + " -> " + outputFileName + " [USB FFmpeg] " + (success ? "完了" : "失敗"));
 
                 } else if (wrapper.isInternalFile()) { // Internal file processing
                     if (internalOutputParentDirPath == null) throw new IOException("内部出力ディレクトリパスがありません。");
@@ -421,21 +444,26 @@ public class MainActivity extends AppCompatActivity {
                     }
                     String outputPath = new File(internalOutputParentDirPath, outputFileName).getAbsolutePath();
 
-                    Log.i(TAG, "Processing Internal: " + inputFileName + " -> " + outputFileName);
-                    if (inputFileName.endsWith(".264") || inputFileName.endsWith(".h264") || inputFileName.endsWith(".avc") || inputFileName.endsWith(".jsv") || inputFileName.endsWith(".jvt")|| inputFileName.endsWith(".26l")) {
-                        // Original method: H264DecodeTest.decodeRawBitstream(String inputPath, String outputDirPath)
-                        // outputDirPath is the parent directory. The method constructs filename.yuv inside.
-                        H264DecodeTest.decodeRawBitstream(inputPath, internalOutputParentDirPath);
-                    } else if (inputFileName.endsWith(".bit") || inputFileName.endsWith(".bin")) {
-                        HevcDecoder decoder = new HevcDecoder();
-                        // Original method: decoder.decodeToYuv(String inputPath, String outputPath)
-                        decoder.decodeToYuv(inputPath, outputPath);
+                    // Ensure output file does not exist or is deleted before decoding
+                    File outputFile = new File(outputPath);
+                    if (outputFile.exists()) {
+                        if (!outputFile.delete()) {
+                             Log.w(TAG, "既存の内部出力ファイル " + outputPath + " を削除できませんでした。");
+                        }
                     }
-                    updateStatusOnUiThread(inputFileName + " -> " + outputFileName + " [App] 完了");
+
+                    Log.i(TAG, "FFmpeg Processing Internal: " + inputFileName + " -> " + outputFileName + " with codec " + codecName);
+                    success = ffmpegDecoder.decodeVideoFile(inputPath, outputPath, codecName);
+
+                    if (!success) { // If decodeVideoFile fails, delete the potentially empty/corrupt output file
+                        Log.w(TAG, "FFmpeg decodeVideoFile failed for " + inputFileName + ". Deleting output file.");
+                         if (outputFile.exists()) outputFile.delete();
+                    }
+                    updateStatusOnUiThread(inputFileName + " -> " + outputFileName + " [App FFmpeg] " + (success ? "完了" : "失敗"));
                 }
             } catch (Exception e) { // Catch exceptions per file to allow others to process
-                Log.e(TAG, "ファイル処理エラー " + inputFileName + ": " + e.getMessage(), e);
-                updateStatusOnUiThread("エラー " + inputFileName + ": " + e.getMessage());
+                Log.e(TAG, "FFmpeg ファイル処理エラー " + inputFileName + ": " + e.getMessage(), e);
+                updateStatusOnUiThread("FFmpegエラー " + inputFileName + ": " + e.getMessage());
             }
         }
     }

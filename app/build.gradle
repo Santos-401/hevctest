@@ -33,6 +33,21 @@ android {
     buildFeatures {
         viewBinding true
     }
+
+    // FFmpeg integration: Add externalNativeBuild block for CMake
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1" // Specify your CMake version
+        }
+    }
+
+    // FFmpeg integration: Specify JNI libs directory
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['src/main/jniLibs']
+        }
+    }
 }
 
 dependencies {
@@ -42,6 +57,7 @@ dependencies {
     implementation libs.activity
     implementation libs.constraintlayout
     testImplementation libs.junit
+    testImplementation 'org.mockito:mockito-core:3.12.4' // Add Mockito
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core
     implementation libs.nanohttpd
