@@ -48,6 +48,7 @@ android {
             jniLibs.srcDirs = ['src/main/jniLibs']
         }
     }
+    ndkVersion "26.3.11579264" // Example of a recent stable version
 }
 
 dependencies {
