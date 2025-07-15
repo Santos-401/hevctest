@@ -19,44 +19,48 @@ find_library(
         avcodec-lib # 変数名は変更しない
         NAMES avcodec # 実際のライブラリ名 (libavcodec.so を探す)
         PATHS ${ABSOLUTE_FFMPEG_LIBS_DIR}
-        NO_DEFAULT_PATH)
+        NO_DEFAULT_PATH
+        NO_CMAKE_FIND_ROOT_PATH)
 if(NOT avcodec-lib)
-        message(WARNING "avcodec-lib NOT FOUND. Searched for 'avcodec' in ${ABSOLUTE_FFMPEG_LIBS_DIR}")
+    message(FATAL_ERROR  "avcodec-lib NOT FOUND. Searched for 'avcodec' in ${ABSOLUTE_FFMPEG_LIBS_DIR}")
 else()
-        message(STATUS "Found avcodec-lib: ${avcodec-lib}")
+    message(STATUS "Found avcodec-lib: ${avcodec-lib}")
 endif()
 
 find_library(
         avformat-lib # 変数名は変更しない
         NAMES avformat # 実際のライブラリ名 (libavformat.so を探す)
         PATHS ${ABSOLUTE_FFMPEG_LIBS_DIR}
-        NO_DEFAULT_PATH)
+        NO_DEFAULT_PATH
+        NO_CMAKE_FIND_ROOT_PATH)
 if(NOT avformat-lib)
-        message(WARNING "avformat-lib NOT FOUND. Searched for 'avformat' in ${ABSOLUTE_FFMPEG_LIBS_DIR}")
+    message(FATAL_ERROR "avformat-lib NOT FOUND. Searched for 'avformat' in ${ABSOLUTE_FFMPEG_LIBS_DIR}")
 else()
-        message(STATUS "Found avformat-lib: ${avformat-lib}")
+    message(STATUS "Found avformat-lib: ${avformat-lib}")
 endif()
 
 find_library(
         avutil-lib # 変数名は変更しない
         NAMES avutil # 実際のライブラリ名 (libavutil.so を探す)
         PATHS ${ABSOLUTE_FFMPEG_LIBS_DIR}
-        NO_DEFAULT_PATH)
+        NO_DEFAULT_PATH
+        NO_CMAKE_FIND_ROOT_PATH)
 if(NOT avutil-lib)
-        message(WARNING "avutil-lib NOT FOUND. Searched for 'avutil' in ${ABSOLUTE_FFMPEG_LIBS_DIR}")
+    message(FATAL_ERROR "avutil-lib NOT FOUND. Searched for 'avutil' in ${ABSOLUTE_FFMPEG_LIBS_DIR}")
 else()
-        message(STATUS "Found avutil-lib: ${avutil-lib}")
+    message(STATUS "Found avutil-lib: ${avutil-lib}")
 endif()
 
 find_library(
         swscale-lib # 変数名は変更しない
         NAMES swscale # 実際のライブラリ名 (libswscale.so を探す)
         PATHS ${ABSOLUTE_FFMPEG_LIBS_DIR}
-        NO_DEFAULT_PATH)
+        NO_DEFAULT_PATH
+        NO_CMAKE_FIND_ROOT_PATH)
 if(NOT swscale-lib)
-        message(WARNING "swscale-lib NOT FOUND. Searched for 'swscale' in ${ABSOLUTE_FFMPEG_LIBS_DIR}")
+    message(FATAL_ERROR "swscale-lib NOT FOUND. Searched for 'swscale' in ${ABSOLUTE_FFMPEG_LIBS_DIR}")
 else()
-        message(STATUS "Found swscale-lib: ${swscale-lib}")
+    message(STATUS "Found swscale-lib: ${swscale-lib}")
 endif()
 
 add_library(ffmpeg_jni SHARED ffmpeg_jni.cpp)
@@ -70,3 +74,6 @@ target_link_libraries(ffmpeg_jni
         android
         log)
 
+include_directories(
+        ${CMAKE_SOURCE_DIR}/include/ffmpeg
+)
