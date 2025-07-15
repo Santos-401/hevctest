@@ -167,19 +167,6 @@ public class MainActivity extends AppCompatActivity {
         Log.d(TAG, "onCreate finished");
     }
 
-    @Override
-    protected void onDestroy() { // ★ スレッド停止処理を追加
-        super.onDestroy();
-        if (executorService != null && !executorService.isShutdown()) {
-            executorService.shutdown();
-        }
-        // 必要であれば ffmpegDecoder.releaseFFmpeg(); を適切なタイミングで呼び出す
-        // (例: アプリケーション終了時やActivity破棄時)
-        // if (ffmpegDecoder != null) {
-        //     ffmpegDecoder.releaseFFmpeg();
-        //     Log.i(TAG, "FFmpeg released.");
-        // }
-    }
 
     private void launchUsbDirectorySelection() {
         StorageManager sm = (StorageManager) getSystemService(Context.STORAGE_SERVICE);
