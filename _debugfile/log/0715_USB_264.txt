@@ -1,0 +1,123 @@
+teraterm.log(5027): 06-25 22:04:27.663  6735  7807 D CCodec  : Client requested ByteBuffer mode decoder w/o color format set: using default planar color format
+teraterm.log(5028): 06-25 22:04:27.664  6735  7807 D CCodecConfig: no c2 equivalents for csd-1
+teraterm.log(5029): 06-25 22:04:27.664  6735  7807 D CCodecConfig: no c2 equivalents for csd-2
+teraterm.log(5030): 06-25 22:04:27.664  6735  7807 D CCodecConfig: no c2 equivalents for flags
+teraterm.log(5031): 06-25 22:04:27.665  6735  7807 D CCodecConfig: c2 config diff is   c2::u32 coded.pl.level = 24581
+teraterm.log(5032): 06-25 22:04:27.665  6735  7807 D CCodecConfig:   c2::u32 coded.pl.profile = 24577
+teraterm.log(5033): 06-25 22:04:27.665  6735  7807 D CCodecConfig:   c2::u32 raw.size.width = 416
+teraterm.log(5035): 06-25 22:04:27.666  6735  7807 W ColorUtils: expected specified color aspects (2:0:0:0)
+teraterm.log(5036): 06-25 22:04:27.666  6735  7807 W Codec2Client: query -- param skipped: index = 1107298332.
+teraterm.log(5037): 06-25 22:04:27.666  6735  7807 D CCodec  : encoding statistics level = 0
+teraterm.log(5038): 06-25 22:04:27.666  6735  7807 D CCodec  : setup formats input: AMessage(what = 0x00000000) = {
+teraterm.log(5039): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t height = 240
+teraterm.log(5040): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t level = 1024
+teraterm.log(5041): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t max-input-size = 2097152
+teraterm.log(5042): 06-25 22:04:27.666  6735  7807 D CCodec  :   string mime = "video/hevc"
+teraterm.log(5043): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t profile = 2
+teraterm.log(5044): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t width = 416
+teraterm.log(5045): 06-25 22:04:27.666  6735  7807 D CCodec  :   Rect crop(0, 0, 415, 239)
+teraterm.log(5046): 06-25 22:04:27.666  6735  7807 D CCodec  : }
+teraterm.log(5047): 06-25 22:04:27.666  6735  7807 D CCodec  : setup formats output: AMessage(what = 0x00000000) = {
+teraterm.log(5048): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t android._color-format = 2135033992
+teraterm.log(5049): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t android._video-scaling = 1
+teraterm.log(5050): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t rotation-degrees = 0
+teraterm.log(5051): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t color-standard = 0
+teraterm.log(5052): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t color-range = 2
+teraterm.log(5053): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t color-transfer = 0
+teraterm.log(5054): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t sar-height = 1
+teraterm.log(5055): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t sar-width = 1
+teraterm.log(5056): 06-25 22:04:27.666  6735  7807 D CCodec  :   Rect crop(0, 0, 415, 239)
+teraterm.log(5057): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t width = 416
+teraterm.log(5058): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t height = 240
+teraterm.log(5059): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t max-height = 240
+teraterm.log(5060): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t max-width = 320
+teraterm.log(5061): 06-25 22:04:27.666  6735  7807 D CCodec  :   string mime = "video/raw"
+teraterm.log(5062): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t android._dataspace = 268435456
+teraterm.log(5063): 06-25 22:04:27.666  6735  7807 D CCodec  :   int32_t color-format = 19
+teraterm.log(5064): 06-25 22:04:27.666  6735  7807 D CCodec  : }
+teraterm.log(5065): 06-25 22:04:27.666  6735  7807 I CCodecConfig: query failed after returning 12 values (BAD_INDEX)
+teraterm.log(5066): 06-25 22:04:27.667  6735  7807 D CCodecConfig: c2 config diff is   c2::u32 raw.max-size.width = 416
+teraterm.log(5067): 06-25 22:04:27.667  6735  7807 W ColorUtils: expected specified color aspects (2:0:0:0)
+teraterm.log(5068): 06-25 22:04:27.670  6735  7807 W Codec2Client: query -- param skipped: index = 1342179345.
+teraterm.log(5069): 06-25 22:04:27.670  6735  7807 W Codec2Client: query -- param skipped: index = 2415921170.
+teraterm.log(5070): 06-25 22:04:27.670  6735  7807 W Codec2Client: query -- param skipped: index = 1610614798.
+teraterm.log(5071): 06-25 22:04:27.671  6735  7807 D CCodecBufferChannel: [c2.android.hevc.decoder#704] Created input block pool with allocatorID 16 => poolID 20 - OK (0)
+teraterm.log(5072): 06-25 22:04:27.672  6735  7807 D CCodecBufferChannel: [c2.android.hevc.decoder#704] Configured output block pool ids 1 => OK
+teraterm.log(5075): 06-25 22:04:27.675  6735  7357 D BufferPoolAccessor2.0: bufferpool2 0xb400007a6a6135b8 : 0(0 size) total buffers - 0(0 size) used buffers - 369/374 (recycle/alloc) - 5/709 (fetch/transfer)
+teraterm.log(5076): 06-25 22:04:27.675  6735  7357 D BufferPoolAccessor2.0: Destruction - bufferpool2 0xb400007a6a6135b8 cached: 0/0M, 0/0% in use; allocs: 374, 99% recycled; transfers: 709, 99% unfetched
+teraterm.log(5082): 06-25 22:04:27.679  6735  7807 D CCodecBufferChannel: [c2.android.hevc.decoder#704] work failed to complete: 14
+teraterm.log(5083): 06-25 22:04:27.679  6735  7806 E MediaCodec: Codec reported err 0xe/14 (Unknown error -14), actionCode 0, while in state 6/STARTED
+teraterm.log(5084): 06-25 22:04:27.679  6735  7806 D MediaCodec: flushMediametrics
+teraterm.log(5085): 06-25 22:04:27.680  6735  7806 E MediaCodec: queueInputBuffer() is valid only at Executing states; currently at Released state
+teraterm.log(5086): 06-25 22:04:27.682  6735  7350 E HevcDecoder: decodeToYuv (INITQP_B_Main10_Sony_1.bit): Decoder failed for c2.android.hevc.decoder
+teraterm.log(5087): 06-25 22:04:27.682  6735  7350 E HevcDecoder: java.lang.IllegalStateException: queueInputBuffer() is valid only at Executing states; currently at Released state
+teraterm.log(5088): 06-25 22:04:27.682  6735  7350 E HevcDecoder: 
+teraterm.log(5089): 06-25 22:04:27.682  6735  7350 E HevcDecoder: 	at android.media.MediaCodec.native_queueInputBuffer(Native Method)
+teraterm.log(5090): 06-25 22:04:27.682  6735  7350 E HevcDecoder: 	at android.media.MediaCodec.queueInputBuffer(MediaCodec.java:2831)
+teraterm.log(5091): 06-25 22:04:27.682  6735  7350 E HevcDecoder: 	at com.brison.hevctest.HevcDecoder.decodeInternal(HevcDecoder.java:288)
+teraterm.log(5092): 06-25 22:04:27.682  6735  7350 E HevcDecoder: 	at com.brison.hevctest.HevcDecoder.decodeToYuv(HevcDecoder.java:506)
+teraterm.log(5093): 06-25 22:04:27.682  6735  7350 E HevcDecoder: 	at com.brison.hevctest.MainActivity.processSelectedFiles(MainActivity.java:432)
+teraterm.log(5094): 06-25 22:04:27.682  6735  7350 E HevcDecoder: 	at com.brison.hevctest.MainActivity.lambda$onCreate$5$com-brison-hevctest-MainActivity(MainActivity.java:141)
+teraterm.log(5095): 06-25 22:04:27.682  6735  7350 E HevcDecoder: 	at com.brison.hevctest.MainActivity$$ExternalSyntheticLambda1.run(D8$$SyntheticClass:0)
+teraterm.log(5096): 06-25 22:04:27.682  6735  7350 E HevcDecoder: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1145)
+teraterm.log(5097): 06-25 22:04:27.682  6735  7350 E HevcDecoder: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:644)
+teraterm.log(5098): 06-25 22:04:27.682  6735  7350 E HevcDecoder: 	at java.lang.Thread.run(Thread.java:1012)
+teraterm.log(5099): 06-25 22:04:27.683  6735  7350 E HevcDecoder: decodeToYuv (INITQP_B_Main10_Sony_1.bit): Error stopping codec for c2.android.hevc.decoder
+teraterm.log(5100): 06-25 22:04:27.683  6735  7350 E HevcDecoder: java.lang.IllegalStateException: 
+teraterm.log(5101): 06-25 22:04:27.683  6735  7350 E HevcDecoder: 	at android.media.MediaCodec.native_stop(Native Method)
+teraterm.log(5102): 06-25 22:04:27.683  6735  7350 E HevcDecoder: 	at android.media.MediaCodec.stop(MediaCodec.java:2452)
+teraterm.log(5103): 06-25 22:04:27.683  6735  7350 E HevcDecoder: 	at com.brison.hevctest.HevcDecoder.decodeInternal(HevcDecoder.java:384)
+teraterm.log(5104): 06-25 22:04:27.683  6735  7350 E HevcDecoder: 	at com.brison.hevctest.HevcDecoder.decodeToYuv(HevcDecoder.java:506)
+teraterm.log(5105): 06-25 22:04:27.683  6735  7350 E HevcDecoder: 	at com.brison.hevctest.MainActivity.processSelectedFiles(MainActivity.java:432)
+teraterm.log(5106): 06-25 22:04:27.683  6735  7350 E HevcDecoder: 	at com.brison.hevctest.MainActivity.lambda$onCreate$5$com-brison-hevctest-MainActivity(MainActivity.java:141)
+teraterm.log(5107): 06-25 22:04:27.683  6735  7350 E HevcDecoder: 	at com.brison.hevctest.MainActivity$$ExternalSyntheticLambda1.run(D8$$SyntheticClass:0)
+teraterm.log(5108): 06-25 22:04:27.683  6735  7350 E HevcDecoder: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1145)
+teraterm.log(5109): 06-25 22:04:27.683  6735  7350 E HevcDecoder: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:644)
+teraterm.log(5110): 06-25 22:04:27.683  6735  7350 E HevcDecoder: 	at java.lang.Thread.run(Thread.java:1012)
+teraterm.log(5111): 06-25 22:04:27.684  6735  7806 D CCodecBufferChannel: [c2.android.hevc.decoder#704] MediaCodec discarded an unknown buffer
+teraterm.log(5112): 06-25 22:04:27.684  6735  7806 D CCodecBufferChannel: [c2.android.hevc.decoder#704] MediaCodec discarded an unknown buffer
+teraterm.log(5113): 06-25 22:04:27.684  6735  7806 D CCodecBufferChannel: [c2.android.hevc.decoder#704] MediaCodec discarded an unknown buffer
+teraterm.log(5114): 06-25 22:04:27.685  6735  7807 I hw-BpHwBinder: onLastStrongRef automatically unlinking death recipients
+teraterm.log(5116): 06-25 22:04:27.685  6735  7806 D MediaCodec: flushMediametrics
+teraterm.log(5117): 06-25 22:04:27.687  6735  7806 D MediaCodec: flushMediametrics
+teraterm.log(5118): 06-25 22:04:27.687  6735  7806 W MediaCodec: no metrics handle found
+teraterm.log(5119): 06-25 22:04:27.687  6735  7350 E HevcDecoder: decodeToYuv (INITQP_B_Main10_Sony_1.bit): All decode attempts failed.
+teraterm.log(5120): 06-25 22:04:27.687  6735  7350 E HevcDecoder: java.lang.IllegalStateException: queueInputBuffer() is valid only at Executing states; currently at Released state
+teraterm.log(5121): 06-25 22:04:27.687  6735  7350 E HevcDecoder: 
+teraterm.log(5122): 06-25 22:04:27.687  6735  7350 E HevcDecoder: 	at android.media.MediaCodec.native_queueInputBuffer(Native Method)
+teraterm.log(5123): 06-25 22:04:27.687  6735  7350 E HevcDecoder: 	at android.media.MediaCodec.queueInputBuffer(MediaCodec.java:2831)
+teraterm.log(5124): 06-25 22:04:27.687  6735  7350 E HevcDecoder: 	at com.brison.hevctest.HevcDecoder.decodeInternal(HevcDecoder.java:288)
+teraterm.log(5125): 06-25 22:04:27.687  6735  7350 E HevcDecoder: 	at com.brison.hevctest.HevcDecoder.decodeToYuv(HevcDecoder.java:506)
+teraterm.log(5126): 06-25 22:04:27.687  6735  7350 E HevcDecoder: 	at com.brison.hevctest.MainActivity.processSelectedFiles(MainActivity.java:432)
+teraterm.log(5127): 06-25 22:04:27.687  6735  7350 E HevcDecoder: 	at com.brison.hevctest.MainActivity.lambda$onCreate$5$com-brison-hevctest-MainActivity(MainActivity.java:141)
+teraterm.log(5128): 06-25 22:04:27.687  6735  7350 E HevcDecoder: 	at com.brison.hevctest.MainActivity$$ExternalSyntheticLambda1.run(D8$$SyntheticClass:0)
+teraterm.log(5129): 06-25 22:04:27.687  6735  7350 E HevcDecoder: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1145)
+teraterm.log(5130): 06-25 22:04:27.687  6735  7350 E HevcDecoder: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:644)
+teraterm.log(5131): 06-25 22:04:27.687  6735  7350 E HevcDecoder: 	at java.lang.Thread.run(Thread.java:1012)
+teraterm.log(5132): 06-25 22:04:27.688  6735  7350 E com.brison.hevctest: ファイル処理エラー INITQP_B_Main10_Sony_1.bit: decodeToYuv (INITQP_B_Main10_Sony_1.bit): All decode attempts failed. Last error: queueInputBuffer() is valid only at Executing states; currently at Released state
+teraterm.log(5133): 06-25 22:04:27.688  6735  7350 E com.brison.hevctest: 
+teraterm.log(5134): 06-25 22:04:27.688  6735  7350 E com.brison.hevctest: java.io.IOException: decodeToYuv (INITQP_B_Main10_Sony_1.bit): All decode attempts failed. Last error: queueInputBuffer() is valid only at Executing states; currently at Released state
+teraterm.log(5135): 06-25 22:04:27.688  6735  7350 E com.brison.hevctest: 
+teraterm.log(5136): 06-25 22:04:27.688  6735  7350 E com.brison.hevctest: 	at com.brison.hevctest.HevcDecoder.decodeInternal(HevcDecoder.java:399)
+teraterm.log(5137): 06-25 22:04:27.688  6735  7350 E com.brison.hevctest: 	at com.brison.hevctest.HevcDecoder.decodeToYuv(HevcDecoder.java:506)
+teraterm.log(5138): 06-25 22:04:27.688  6735  7350 E com.brison.hevctest: 	at com.brison.hevctest.MainActivity.processSelectedFiles(MainActivity.java:432)
+teraterm.log(5139): 06-25 22:04:27.688  6735  7350 E com.brison.hevctest: 	at com.brison.hevctest.MainActivity.lambda$onCreate$5$com-brison-hevctest-MainActivity(MainActivity.java:141)
+teraterm.log(5140): 06-25 22:04:27.688  6735  7350 E com.brison.hevctest: 	at com.brison.hevctest.MainActivity$$ExternalSyntheticLambda1.run(D8$$SyntheticClass:0)
+teraterm.log(5141): 06-25 22:04:27.688  6735  7350 E com.brison.hevctest: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1145)
+teraterm.log(5142): 06-25 22:04:27.688  6735  7350 E com.brison.hevctest: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:644)
+teraterm.log(5143): 06-25 22:04:27.688  6735  7350 E com.brison.hevctest: 	at java.lang.Thread.run(Thread.java:1012)
+teraterm.log(5144): 06-25 22:04:27.688  6735  7350 E com.brison.hevctest: Caused by: java.lang.IllegalStateException: queueInputBuffer() is valid only at Executing states; currently at Released state
+teraterm.log(5145): 06-25 22:04:27.688  6735  7350 E com.brison.hevctest: 
+teraterm.log(5146): 06-25 22:04:27.688  6735  7350 E com.brison.hevctest: 	at android.media.MediaCodec.native_queueInputBuffer(Native Method)
+teraterm.log(5147): 06-25 22:04:27.688  6735  7350 E com.brison.hevctest: 	at android.media.MediaCodec.queueInputBuffer(MediaCodec.java:2831)
+teraterm.log(5148): 06-25 22:04:27.688  6735  7350 E com.brison.hevctest: 	at com.brison.hevctest.HevcDecoder.decodeInternal(HevcDecoder.java:288)
+teraterm.log(5149): 06-25 22:04:27.688  6735  7350 E com.brison.hevctest: 	... 7 more
+teraterm.log(5150): 06-25 22:04:27.689  6735  6735 I com.brison.hevctest: Status: エラー INITQP_B_Main10_Sony_1.bit: decodeToYuv (INITQP_B_Main10_Sony_1.bit): All decode attempts failed. Last error: queueInputBuffer() is valid only at Executing states; currently at Released state
+teraterm.log(5151): 06-25 22:04:27.698  6735  6735 D com.brison.hevctest: listInternalFiles called
+teraterm.log(5152): 06-25 22:04:27.699  6735  6735 I com.brison.hevctest: Status: スマホ内ファイル検索中: /data/user/10/com.brison.example/files
+teraterm.log(5153): 06-25 22:04:27.702  6735  6735 I com.brison.hevctest: Status: 2 個のローカルファイル
+teraterm.log(5248): 06-25 22:04:32.148  1868  1868 I ResourceLog:  6735 u10_a279     10 -10  15G 156M  99M S  5.8   1.3   0:06.00 com.brison.example
+teraterm.log(5275): 06-25 22:04:32.649  6735  7356 D BufferPoolAccessor2.0: bufferpool2 0xb400007a6a60b438 : 0(0 size) total buffers - 0(0 size) used buffers - 549/554 (recycle/alloc) - 5/551 (fetch/transfer)
+teraterm.log(5276): 06-25 22:04:32.649  6735  7356 D BufferPoolAccessor2.0: evictor expired: 1, evicted: 1
+teraterm.log(5294): 06-25 22:04:33.650  6735  7356 D BufferPoolAccessor2.0: bufferpool2 0xb400007a6a616648 : 0(0 size) total buffers - 0(0 size) used buffers - 4/9 (recycle/alloc) - 3/5 (fetch/transfer)
+teraterm.log(5295): 06-25 22:04:33.650  6735  7356 D BufferPoolAccessor2.0: evictor expired: 2, evicted: 1
