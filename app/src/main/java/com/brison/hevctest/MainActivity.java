@@ -224,7 +224,7 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         updateStatus("スマホ内ファイル検索中: " + internalDir.getAbsolutePath());
-        File[] files = internalDir.listFiles(f -> f.isFile() && (f.getName().endsWith(".264") || f.getName().endsWith(".h264") || f.getName().endsWith(".avc") || f.getName().endsWith(".jsv") || f.getName().endsWith(".jvt") || f.getName().endsWith(".bit") || f.getName().endsWith(".bin")));
+        File[] files = internalDir.listFiles(f -> f.isFile() && (f.getName().endsWith(".264") || f.getName().endsWith(".h264") || f.getName().endsWith(".avc") || f.getName().endsWith(".26l")|| f.getName().endsWith(".jsv") || f.getName().endsWith(".jvt") || f.getName().endsWith(".bit") || f.getName().endsWith(".bin")));
 
         if (files != null) {
             Arrays.sort(files, (f1, f2) -> f1.getName().compareTo(f2.getName()));
@@ -261,7 +261,7 @@ public class MainActivity extends AppCompatActivity {
         for (DocumentFile file : selectedDir.listFiles()) {
             String fileName = file.getName();
             if (file.isFile() && fileName != null &&
-                    (fileName.endsWith(".264") || fileName.endsWith(".h264") || fileName.endsWith(".avc") ||
+                    (fileName.endsWith(".264") || fileName.endsWith(".h264") || fileName.endsWith(".avc")  || fileName.endsWith(".26l")||
                             fileName.endsWith(".jsv") || fileName.endsWith(".jvt") ||
                             fileName.endsWith(".bit") || fileName.endsWith(".bin"))) {
                 currentFiles.add(new DocumentFileWrapper(this, file));
@@ -351,7 +351,7 @@ public class MainActivity extends AppCompatActivity {
             if (rootDir == null || !rootDir.isDirectory() || !rootDir.canWrite()) {
                 throw new IOException("USBルートディレクトリに書き込めません: " + usbTreeUri);
             }
-            String resultFolderName = "result_usb_ffmpeg"; // フォルダ名を変更して区別
+            String resultFolderName = "result"; // フォルダ名を変更して区別
             outputParentDirDocFile = rootDir.findFile(resultFolderName);
             if (outputParentDirDocFile == null) {
                 outputParentDirDocFile = rootDir.createDirectory(resultFolderName);
@@ -364,9 +364,9 @@ public class MainActivity extends AppCompatActivity {
             Log.i(TAG, "USB出力ディレクトリ (FFmpeg): " + outputParentDirDocFile.getUri());
         } else { // Processing internal files
             File internalAppDir = getFilesDir();
-            File internalResultDir = new File(internalAppDir, "result_ffmpeg"); // フォルダ名を変更
+            File internalResultDir = new File(internalAppDir, "result"); // フォルダ名を変更
             if (!internalResultDir.exists() && !internalResultDir.mkdirs()) {
-                throw new IOException("内部ストレージに 'result_ffmpeg' ディレクトリを作成できませんでした。");
+                throw new IOException("内部ストレージに 'result' ディレクトリを作成できませんでした。");
             }
             internalOutputParentDirPath = internalResultDir.getAbsolutePath();
             Log.i(TAG, "内部出力ディレクトリ (FFmpeg): " + internalOutputParentDirPath);
