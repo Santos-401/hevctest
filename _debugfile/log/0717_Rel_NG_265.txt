@@ -1,0 +1,55 @@
+teraterm.log(161): 07-15 19:10:36.988 13299 15668 I com.brison.hevctest: USB出力ディレクトリ (FFmpeg): content://com.android.externalstorage.documents/tree/587D-AF76%3A___files/document/587D-AF76%3A___files%2Fresult
+teraterm.log(172): 07-15 19:10:37.198 13299 15668 I com.brison.hevctest: FFmpeg Processing USB: DBLK_A_MAIN10_VIXS_4.bit -> DBLK_A_MAIN10_VIXS_4.bit.yuv with codec hevc
+teraterm.log(173): 07-15 19:10:37.198 13299 15668 D FFmpegDecoderJava: Requesting decodeUri: content://com.android.externalstorage.documents/tree/587D-AF76%3A___files/document/587D-AF76%3A___files%2FDBLK_A_MAIN10_VIXS_4.bit -> content://com.android.externalstorage.documents/tree/587D-AF76%3A___files/document/587D-AF76%3A___files%2Fresult%2FDBLK_A_MAIN10_VIXS_4.bit.yuv with codec hevc
+teraterm.log(174): 07-15 19:10:37.198 13299 15668 I FFmpegJNI: decodeUri START: codec=hevc
+teraterm.log(175): 07-15 19:10:37.198 13299 15668 I FFmpegJNI: get_fd_from_uri: Attempting to get FD for URI with mode \'r\'
+teraterm.log(178): 07-15 19:10:37.213 13299 15668 I FFmpegJNI: Successfully duplicated FD 104 to 99
+teraterm.log(179): 07-15 19:10:37.214 13299 15668 I FFmpegJNI: ParcelFileDescriptor closed.
+teraterm.log(180): 07-15 19:10:37.214 13299 15668 I FFmpegJNI: get_fd_from_uri returning duplicated FD 99 for URI with mode r
+teraterm.log(181): 07-15 19:10:37.214 13299 15668 I FFmpegJNI: Obtained input FD: 99
+teraterm.log(182): 07-15 19:10:37.214 13299 15668 I FFmpegJNI: Temporary input file path: /data/user/10/com.brison.example/cache/temp_input.video
+teraterm.log(183): 07-15 19:10:37.214 13299 15668 I FFmpegJNI: Temporary output file path: /data/user/10/com.brison.example/cache/temp_output.yuv
+teraterm.log(184): 07-15 19:10:37.215 13299 15668 I FFmpegJNI: Opened temporary input file \'/data/user/10/com.brison.example/cache/temp_input.video\' for writing.
+teraterm.log(185): 07-15 19:10:37.215 13299 15668 I FFmpegJNI: Starting copy from input FD 99 to temporary file \'/data/user/10/com.brison.example/cache/temp_input.video\'
+teraterm.log(186): 07-15 19:10:37.215 13299 15668 I FFmpegJNI: Finished copying from input FD 99 to temporary file \'/data/user/10/com.brison.example/cache/temp_input.video\'. Total bytes written: 100467
+teraterm.log(187): 07-15 19:10:37.215 13299 15668 I FFmpegJNI: Closed temporary input file \'/data/user/10/com.brison.example/cache/temp_input.video\'.
+teraterm.log(188): 07-15 19:10:37.215 13299 15668 I FFmpegJNI: Calling decodeFile with tempInput: \'/data/user/10/com.brison.example/cache/temp_input.video\', tempOutput: \'/data/user/10/com.brison.example/cache/temp_output.yuv\'
+teraterm.log(189): 07-15 19:10:37.215 13299 15668 I FFmpegJNI: decodeFile START: in=/data/user/10/com.brison.example/cache/temp_input.video, out=/data/user/10/com.brison.example/cache/temp_output.yuv, codec=hevc
+teraterm.log(190): 07-15 19:10:37.222 13299 15668 I FFmpegJNI: Using codec: hevc (ID: 173)
+teraterm.log(191): 07-15 19:10:37.223 13299 15668 I FFmpegJNI: Output file /data/user/10/com.brison.example/cache/temp_output.yuv opened for writing.
+teraterm.log(192): 07-15 19:10:37.223 13299 15668 I FFmpegJNI: Starting frame decoding loop. Video stream index: 0
+teraterm.log(193): 07-15 19:10:37.235 13299 15668 I FFmpegJNI: Frame 0 decoded (width 176, height 144, format 62)
+teraterm.log(194): 07-15 19:10:37.235 13299 15668 E FFmpegJNI: Unsupported pixel format 62 for direct saving.
+teraterm.log(195): 07-15 19:10:37.238 13299 15668 I FFmpegJNI: Frame 0 decoded (width 176, height 144, format 62)
+teraterm.log(196): 07-15 19:10:37.238 13299 15668 E FFmpegJNI: Unsupported pixel format 62 for direct saving.
+teraterm.log(197): 07-15 19:10:37.241 13299 15668 I FFmpegJNI: Frame 0 decoded (width 176, height 144, format 62)
+teraterm.log(198): 07-15 19:10:37.241 13299 15668 E FFmpegJNI: Unsupported pixel format 62 for direct saving.
+teraterm.log(199): 07-15 19:10:37.244 13299 15668 I FFmpegJNI: Frame 0 decoded (width 176, height 144, format 62)
+teraterm.log(200): 07-15 19:10:37.245 13299 15668 E FFmpegJNI: Unsupported pixel format 62 for direct saving.
+teraterm.log(201): 07-15 19:10:37.248 13299 15668 I FFmpegJNI: Frame 0 decoded (width 176, height 144, format 62)
+teraterm.log(202): 07-15 19:10:37.248 13299 15668 E FFmpegJNI: Unsupported pixel format 62 for direct saving.
+teraterm.log(203): 07-15 19:10:37.248 13299 15668 I FFmpegJNI: Flushing decoder...
+teraterm.log(204): 07-15 19:10:37.248 13299 15668 I FFmpegJNI: Flushed frame 0 decoded (width 176, height 144, format 62)
+teraterm.log(205): 07-15 19:10:37.248 13299 15668 E FFmpegJNI: Unsupported pixel format 62 for direct saving during flush.
+teraterm.log(206): 07-15 19:10:37.248 13299 15668 I FFmpegJNI: Flushed frame 0 decoded (width 176, height 144, format 62)
+teraterm.log(207): 07-15 19:10:37.248 13299 15668 E FFmpegJNI: Unsupported pixel format 62 for direct saving during flush.
+teraterm.log(208): 07-15 19:10:37.248 13299 15668 I FFmpegJNI: Flushed frame 0 decoded (width 176, height 144, format 62)
+teraterm.log(209): 07-15 19:10:37.248 13299 15668 E FFmpegJNI: Unsupported pixel format 62 for direct saving during flush.
+teraterm.log(210): 07-15 19:10:37.248 13299 15668 I FFmpegJNI: End of flushing (EAGAIN or EOF received from receive_frame)
+teraterm.log(211): 07-15 19:10:37.248 13299 15668 I FFmpegJNI: Decoding finished. Total frames written: 0
+teraterm.log(212): 07-15 19:10:37.248 13299 15668 I FFmpegJNI: Output file /data/user/10/com.brison.example/cache/temp_output.yuv closed.
+teraterm.log(213): 07-15 19:10:37.249 13299 15668 I FFmpegJNI: decodeFile END: ret=-11
+teraterm.log(214): 07-15 19:10:37.249 13299 15668 E FFmpegJNI: Decoding from temp file to temp file failed with code -11
+teraterm.log(215): 07-15 19:10:37.249 13299 15668 I FFmpegJNI: decodeUri cleanup started. Current ret = -11
+teraterm.log(216): 07-15 19:10:37.249 13299 15668 I FFmpegJNI: Removing temporary input file: /data/user/10/com.brison.example/cache/temp_input.video
+teraterm.log(217): 07-15 19:10:37.249 13299 15668 I FFmpegJNI: Removing temporary output file: /data/user/10/com.brison.example/cache/temp_output.yuv
+teraterm.log(218): 07-15 19:10:37.249 13299 15668 I FFmpegJNI: Closing input FD 99
+teraterm.log(219): 07-15 19:10:37.249 13299 15668 I FFmpegJNI: Input FD 99 closed.
+teraterm.log(220): 07-15 19:10:37.249 13299 15668 I FFmpegJNI: decodeUri END: final ret=-11
+teraterm.log(221): 07-15 19:10:37.249 13299 15668 E FFmpegDecoderJava: decodeUri failed for: content://com.android.externalstorage.documents/tree/587D-AF76%3A___files/document/587D-AF76%3A___files%2FDBLK_A_MAIN10_VIXS_4.bit, error code: -11
+teraterm.log(222): 07-15 19:10:37.249 13299 15668 W com.brison.hevctest: FFmpeg decodeVideoUri failed for DBLK_A_MAIN10_VIXS_4.bit. Deleting output file.
+teraterm.log(226): 07-15 19:10:37.272 13299 13299 I com.brison.hevctest: Status: DBLK_A_MAIN10_VIXS_4.bit -> DBLK_A_MAIN10_VIXS_4.bit.yuv [USB FFmpeg] 失敗
+teraterm.log(227): 07-15 19:10:37.281 13299 13299 D com.brison.hevctest: listUsbFiles called for URI: content://com.android.externalstorage.documents/tree/587D-AF76%3A___files
+teraterm.log(228): 07-15 19:10:37.294 13299 13299 I com.brison.hevctest: Status: USBファイル検索中: ___files
+teraterm.log(232): 07-15 19:10:37.339 13299 13299 I com.brison.hevctest: Status: 1 個のUSBファイル
+teraterm.log(322): 07-15 19:10:40.501  1765  1765 I ResourceLog: 13299 u10_a269     10 -10  15G 165M 113M S  2.3   1.4   0:01.00 com.brison.example
