@@ -1,0 +1,36 @@
+3_teraterm.log(175): 07-17 01:37:34.860 31433   661 I com.brison.hevctest: USB出力ディレクトリ (FFmpeg): content://com.android.externalstorage.documents/tree/587D-AF76%3A___files/document/587D-AF76%3A___files%2Fresult
+3_teraterm.log(186): 07-17 01:37:35.055 31433   661 I com.brison.hevctest: FFmpeg Processing USB: DBLK_A_MAIN10_VIXS_4.bit -> DBLK_A_MAIN10_VIXS_4.bit.yuv with codec hevc
+3_teraterm.log(187): 07-17 01:37:35.056 31433   661 D FFmpegDecoderJava: Requesting decodeUri: content://com.android.externalstorage.documents/tree/587D-AF76%3A___files/document/587D-AF76%3A___files%2FDBLK_A_MAIN10_VIXS_4.bit -> content://com.android.externalstorage.documents/tree/587D-AF76%3A___files/document/587D-AF76%3A___files%2Fresult%2FDBLK_A_MAIN10_VIXS_4.bit.yuv with codec hevc
+3_teraterm.log(188): 07-17 01:37:35.056 31433   661 I FFmpegJNI: decodeUri START: codec=hevc
+3_teraterm.log(189): 07-17 01:37:35.056 31433   661 I FFmpegJNI: get_fd_from_uri: Attempting to get FD for URI with mode \'r\'
+3_teraterm.log(193): 07-17 01:37:35.073 31433   661 I FFmpegJNI: Successfully duplicated FD 117 to 97
+3_teraterm.log(194): 07-17 01:37:35.073 31433   661 I FFmpegJNI: ParcelFileDescriptor closed.
+3_teraterm.log(195): 07-17 01:37:35.073 31433   661 I FFmpegJNI: get_fd_from_uri returning duplicated FD 97 for URI with mode r
+3_teraterm.log(196): 07-17 01:37:35.073 31433   661 I FFmpegJNI: Obtained input FD: 97
+3_teraterm.log(197): 07-17 01:37:35.074 31433   661 I FFmpegJNI: Temporary input file path: /data/user/10/com.brison.example/cache/temp_input_31433.video
+3_teraterm.log(198): 07-17 01:37:35.074 31433   661 I FFmpegJNI: Temporary output file path: /data/user/10/com.brison.example/cache/temp_output_31433.yuv
+3_teraterm.log(199): 07-17 01:37:35.074 31433   661 I FFmpegJNI: Opened temporary input file \'/data/user/10/com.brison.example/cache/temp_input_31433.video\' for writing.
+3_teraterm.log(200): 07-17 01:37:35.074 31433   661 I FFmpegJNI: Starting copy from input FD 97 to temporary file \'/data/user/10/com.brison.example/cache/temp_input_31433.video\'
+3_teraterm.log(201): 07-17 01:37:35.074 31433   661 I FFmpegJNI: Finished copying from input FD 97 to temporary file \'/data/user/10/com.brison.example/cache/temp_input_31433.video\'. Total bytes written: 100467
+3_teraterm.log(202): 07-17 01:37:35.074 31433   661 I FFmpegJNI: Closed temporary input file \'/data/user/10/com.brison.example/cache/temp_input_31433.video\'.
+3_teraterm.log(203): 07-17 01:37:35.074 31433   661 I FFmpegJNI: Calling decodeFile with tempInput: \'/data/user/10/com.brison.example/cache/temp_input_31433.video\', tempOutput: \'/data/user/10/com.brison.example/cache/temp_output_31433.yuv\'
+3_teraterm.log(204): 07-17 01:37:35.074 31433   661 I FFmpegJNI: decodeFile START: in=/data/user/10/com.brison.example/cache/temp_input_31433.video, out=/data/user/10/com.brison.example/cache/temp_output_31433.yuv, codec=hevc
+3_teraterm.log(205): 07-17 01:37:35.082 31433   661 I FFmpegJNI: Using codec: hevc (ID: 173)
+3_teraterm.log(206): 07-17 01:37:35.082 31433   661 I FFmpegJNI: Output file /data/user/10/com.brison.example/cache/temp_output_31433.yuv opened for writing.
+3_teraterm.log(207): 07-17 01:37:35.082 31433   661 I FFmpegJNI: Starting frame decoding loop. Video stream index: 0
+3_teraterm.log(208): 07-17 01:37:35.084 31433   661 I FFmpegJNI: Decoding finished. Total frames written: 0. Current ret: -1
+3_teraterm.log(209): 07-17 01:37:35.084 31433   661 I FFmpegJNI: Output file /data/user/10/com.brison.example/cache/temp_output_31433.yuv closed.
+3_teraterm.log(210): 07-17 01:37:35.085 31433   661 I FFmpegJNI: decodeFile END: ret=-1
+3_teraterm.log(211): 07-17 01:37:35.085 31433   661 E FFmpegJNI: Decoding from temp file to temp file failed with code -1
+3_teraterm.log(212): 07-17 01:37:35.085 31433   661 I FFmpegJNI: decodeUri cleanup started. Current ret = -1
+3_teraterm.log(213): 07-17 01:37:35.085 31433   661 I FFmpegJNI: Removing temporary input file: /data/user/10/com.brison.example/cache/temp_input_31433.video
+3_teraterm.log(214): 07-17 01:37:35.085 31433   661 I FFmpegJNI: Removing temporary output file: /data/user/10/com.brison.example/cache/temp_output_31433.yuv
+3_teraterm.log(215): 07-17 01:37:35.085 31433   661 I FFmpegJNI: Closing input FD 97
+3_teraterm.log(216): 07-17 01:37:35.085 31433   661 I FFmpegJNI: Input FD 97 closed.
+3_teraterm.log(217): 07-17 01:37:35.085 31433   661 I FFmpegJNI: decodeUri END: final ret=-1
+3_teraterm.log(218): 07-17 01:37:35.085 31433   661 E FFmpegDecoderJava: decodeUri failed for: content://com.android.externalstorage.documents/tree/587D-AF76%3A___files/document/587D-AF76%3A___files%2FDBLK_A_MAIN10_VIXS_4.bit, error code: -1
+3_teraterm.log(219): 07-17 01:37:35.085 31433   661 W com.brison.hevctest: FFmpeg decodeVideoUri failed for DBLK_A_MAIN10_VIXS_4.bit. Deleting output file.
+3_teraterm.log(223): 07-17 01:37:35.110 31433 31433 I com.brison.hevctest: Status: DBLK_A_MAIN10_VIXS_4.bit -> DBLK_A_MAIN10_VIXS_4.bit.yuv [USB FFmpeg] 失敗
+3_teraterm.log(224): 07-17 01:37:35.121 31433 31433 D com.brison.hevctest: listUsbFiles called for URI: content://com.android.externalstorage.documents/tree/587D-AF76%3A___files
+3_teraterm.log(227): 07-17 01:37:35.133 31433 31433 I com.brison.hevctest: Status: USBファイル検索中: ___files
+3_teraterm.log(228): 07-17 01:37:35.177 31433 31433 I com.brison.hevctest: Status: 1 個のUSBファイル
