@@ -175,10 +175,28 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeFile(JNIEnv *env, jobject /* this *
                 LOGI("Frame %d decoded (width %d, height %d, format %d)",
                      frame_count, pFrame->width, pFrame->height, pFrame->format);
 
-                if (pFrame->format == AV_PIX_FMT_YUV420P ||
-                    pFrame->format == AV_PIX_FMT_YUVJ420P ||
-                    pFrame->format == AV_PIX_FMT_YUV422P ||
-                    pFrame->format == AV_PIX_FMT_YUV444P) {
+                if (pFrame->format == AV_PIX_FMT_YUV420P10LE) {
+                    struct SwsContext* sws_ctx = sws_getContext(
+                        pFrame->width, pFrame->height, (AVPixelFormat)pFrame->format,
+                        pFrame->width, pFrame->height, AV_PIX_FMT_YUV420P,
+                        SWS_BILINEAR, nullptr, nullptr, nullptr);
+                    if (sws_ctx) {
+                        AVFrame* pFrame8bit = av_frame_alloc();
+                        pFrame8bit->width = pFrame->width;
+                        pFrame8bit->height = pFrame->height;
+                        pFrame8bit->format = AV_PIX_FMT_YUV420P;
+                        av_image_alloc(pFrame8bit->data, pFrame8bit->linesize, pFrame->width, pFrame->height, AV_PIX_FMT_YUV420P, 32);
+                        sws_scale(sws_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pFrame->height, pFrame8bit->data, pFrame8bit->linesize);
+                        save_yuv_frame(outfile_ptr, pFrame8bit);
+                        av_freep(&pFrame8bit->data[0]);
+                        av_frame_free(&pFrame8bit);
+                        sws_freeContext(sws_ctx);
+                        frame_count++;
+                    } else {
+                        LOGE("Could not initialize the conversion context.");
+                    }
+                } else if (pFrame->format == AV_PIX_FMT_YUV420P ||
+                           pFrame->format == AV_PIX_FMT_YUVJ420P) {
                     save_yuv_frame(outfile_ptr, pFrame);
                     frame_count++;
                 } else {
@@ -205,8 +223,27 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeFile(JNIEnv *env, jobject /* this *
         }
         LOGI("Flushed frame %d decoded (width %d, height %d, format %d)",
              frame_count, pFrame->width, pFrame->height, pFrame->format);
-        if (pFrame->format == AV_PIX_FMT_YUV420P || pFrame->format == AV_PIX_FMT_YUVJ420P ||
-            pFrame->format == AV_PIX_FMT_YUV422P || pFrame->format == AV_PIX_FMT_YUV444P) {
+        if (pFrame->format == AV_PIX_FMT_YUV420P10LE) {
+             struct SwsContext* sws_ctx = sws_getContext(
+                pFrame->width, pFrame->height, (AVPixelFormat)pFrame->format,
+                pFrame->width, pFrame->height, AV_PIX_FMT_YUV420P,
+                SWS_BILINEAR, nullptr, nullptr, nullptr);
+            if (sws_ctx) {
+                AVFrame* pFrame8bit = av_frame_alloc();
+                pFrame8bit->width = pFrame->width;
+                pFrame8bit->height = pFrame->height;
+                pFrame8bit->format = AV_PIX_FMT_YUV420P;
+                av_image_alloc(pFrame8bit->data, pFrame8bit->linesize, pFrame->width, pFrame->height, AV_PIX_FMT_YUV420P, 32);
+                sws_scale(sws_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pFrame->height, pFrame8bit->data, pFrame8bit->linesize);
+                save_yuv_frame(outfile_ptr, pFrame8bit);
+                av_freep(&pFrame8bit->data[0]);
+                av_frame_free(&pFrame8bit);
+                sws_freeContext(sws_ctx);
+                frame_count++;
+            } else {
+                LOGE("Could not initialize the conversion context for flushed frame.");
+            }
+        } else if (pFrame->format == AV_PIX_FMT_YUV420P || pFrame->format == AV_PIX_FMT_YUVJ420P) {
             save_yuv_frame(outfile_ptr, pFrame);
             frame_count++;
         } else {
