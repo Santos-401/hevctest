@@ -378,7 +378,7 @@ public class MainActivity extends AppCompatActivity {
                 Log.w(TAG, "Skipping file with unknown name.");
                 continue;
             }
-            String outputFileName = inputFileName + ".yuv"; // Basic naming convention
+            String outputFileName = inputFileName.substring(0, inputFileName.lastIndexOf('.')) + "_decoded.yuv";
             String codecName = ""; // "h264" or "hevc"
 
             if (inputFileName.endsWith(".264") || inputFileName.endsWith(".h264") || inputFileName.endsWith(".avc") || inputFileName.endsWith(".jsv") || inputFileName.endsWith(".jvt")|| inputFileName.endsWith(".26l")) {
@@ -435,7 +435,7 @@ public class MainActivity extends AppCompatActivity {
                     File outputFile = new File(outputPath);
                     if (outputFile.exists()) {
                         if (!outputFile.delete()) {
-                             Log.w(TAG, "既存の内部出力ファイル " + outputPath + " を削除できませんでした。");
+                            Log.w(TAG, "既存の内部出力ファイル " + outputPath + " を削除できませんでした。");
                         }
                     }
 
@@ -444,7 +444,7 @@ public class MainActivity extends AppCompatActivity {
 
                     if (!success) { // If decodeVideoFile fails, delete the potentially empty/corrupt output file
                         Log.w(TAG, "FFmpeg decodeVideoFile failed for " + inputFileName + ". Deleting output file.");
-                         if (outputFile.exists()) outputFile.delete();
+                        if (outputFile.exists()) outputFile.delete();
                     }
                     updateStatusOnUiThread(inputFileName + " -> " + outputFileName + " [App FFmpeg] " + (success ? "完了" : "失敗"));
                 }
