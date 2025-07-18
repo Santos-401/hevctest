@@ -69,7 +69,7 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeFile(JNIEnv *env, jobject /* this *
 
     if (!inputFile || !outputFile || !codecName) {
         LOGE("Failed to get UTF chars from JNI strings. inputFile=%p, outputFile=%p, codecName=%p", inputFile, outputFile, codecName);
-        ret = -1; 
+        ret = -1;
         goto end;
     }
 
@@ -166,7 +166,7 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeFile(JNIEnv *env, jobject /* this *
             while (ret >= 0) {
                 ret = avcodec_receive_frame(pCodecCtx, pFrame);
                 if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-                    break; 
+                    break;
                 } else if (ret < 0) {
                     LOGE("Error during decoding (receiving frame): %s", av_err2str(ret));
                     goto end_decode_loop;
@@ -175,24 +175,42 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeFile(JNIEnv *env, jobject /* this *
                 LOGI("Frame %d decoded (width %d, height %d, format %d)",
                      frame_count, pFrame->width, pFrame->height, pFrame->format);
 
-                if (pFrame->format == AV_PIX_FMT_YUV420P ||
-                    pFrame->format == AV_PIX_FMT_YUVJ420P ||
-                    pFrame->format == AV_PIX_FMT_YUV422P ||
-                    pFrame->format == AV_PIX_FMT_YUV444P) {
+                if (pFrame->format == AV_PIX_FMT_YUV420P10LE) {
+                    struct SwsContext* sws_ctx = sws_getContext(
+                            pFrame->width, pFrame->height, (AVPixelFormat)pFrame->format,
+                            pFrame->width, pFrame->height, AV_PIX_FMT_YUV420P,
+                            SWS_BILINEAR, nullptr, nullptr, nullptr);
+                    if (sws_ctx) {
+                        AVFrame* pFrame8bit = av_frame_alloc();
+                        pFrame8bit->width = pFrame->width;
+                        pFrame8bit->height = pFrame->height;
+                        pFrame8bit->format = AV_PIX_FMT_YUV420P;
+                        av_image_alloc(pFrame8bit->data, pFrame8bit->linesize, pFrame->width, pFrame->height, AV_PIX_FMT_YUV420P, 32);
+                        sws_scale(sws_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pFrame->height, pFrame8bit->data, pFrame8bit->linesize);
+                        save_yuv_frame(outfile_ptr, pFrame8bit);
+                        av_freep(&pFrame8bit->data[0]);
+                        av_frame_free(&pFrame8bit);
+                        sws_freeContext(sws_ctx);
+                        frame_count++;
+                    } else {
+                        LOGE("Could not initialize the conversion context.");
+                    }
+                } else if (pFrame->format == AV_PIX_FMT_YUV420P ||
+                           pFrame->format == AV_PIX_FMT_YUVJ420P) {
                     save_yuv_frame(outfile_ptr, pFrame);
                     frame_count++;
                 } else {
                     LOGE("Unsupported pixel format %d for direct saving.", pFrame->format);
                 }
-                av_frame_unref(pFrame); 
+                av_frame_unref(pFrame);
             }
         }
-        av_packet_unref(pPacket); 
+        av_packet_unref(pPacket);
     }
     end_decode_loop:;
 
     LOGI("Flushing decoder...");
-    ret = avcodec_send_packet(pCodecCtx, nullptr); 
+    ret = avcodec_send_packet(pCodecCtx, nullptr);
 
     while (true) {
         ret = avcodec_receive_frame(pCodecCtx, pFrame);
@@ -205,8 +223,27 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeFile(JNIEnv *env, jobject /* this *
         }
         LOGI("Flushed frame %d decoded (width %d, height %d, format %d)",
              frame_count, pFrame->width, pFrame->height, pFrame->format);
-        if (pFrame->format == AV_PIX_FMT_YUV420P || pFrame->format == AV_PIX_FMT_YUVJ420P ||
-            pFrame->format == AV_PIX_FMT_YUV422P || pFrame->format == AV_PIX_FMT_YUV444P) {
+        if (pFrame->format == AV_PIX_FMT_YUV420P10LE) {
+            struct SwsContext* sws_ctx = sws_getContext(
+                    pFrame->width, pFrame->height, (AVPixelFormat)pFrame->format,
+                    pFrame->width, pFrame->height, AV_PIX_FMT_YUV420P,
+                    SWS_BILINEAR, nullptr, nullptr, nullptr);
+            if (sws_ctx) {
+                AVFrame* pFrame8bit = av_frame_alloc();
+                pFrame8bit->width = pFrame->width;
+                pFrame8bit->height = pFrame->height;
+                pFrame8bit->format = AV_PIX_FMT_YUV420P;
+                av_image_alloc(pFrame8bit->data, pFrame8bit->linesize, pFrame->width, pFrame->height, AV_PIX_FMT_YUV420P, 32);
+                sws_scale(sws_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pFrame->height, pFrame8bit->data, pFrame8bit->linesize);
+                save_yuv_frame(outfile_ptr, pFrame8bit);
+                av_freep(&pFrame8bit->data[0]);
+                av_frame_free(&pFrame8bit);
+                sws_freeContext(sws_ctx);
+                frame_count++;
+            } else {
+                LOGE("Could not initialize the conversion context for flushed frame.");
+            }
+        } else if (pFrame->format == AV_PIX_FMT_YUV420P || pFrame->format == AV_PIX_FMT_YUVJ420P) {
             save_yuv_frame(outfile_ptr, pFrame);
             frame_count++;
         } else {
@@ -216,12 +253,12 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeFile(JNIEnv *env, jobject /* this *
     }
 
     LOGI("Decoding finished. Total frames written: %d", frame_count);
-    ret = frame_count > 0 ? 0 : -11; 
+    ret = frame_count > 0 ? 0 : -11;
 
     end:
     if (outfile_ptr) {
         fclose(outfile_ptr);
-        LOGI("Output file %s closed.", outputFile ? outputFile : "null"); 
+        LOGI("Output file %s closed.", outputFile ? outputFile : "null");
     }
     if (pPacket) {
         av_packet_free(&pPacket);
@@ -230,10 +267,10 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeFile(JNIEnv *env, jobject /* this *
         av_frame_free(&pFrame);
     }
     if (pCodecCtx) {
-        avcodec_free_context(&pCodecCtx); 
+        avcodec_free_context(&pCodecCtx);
     }
     if (pFormatCtx) {
-        avformat_close_input(&pFormatCtx); 
+        avformat_close_input(&pFormatCtx);
     }
 
     if (inputFile && input_file_path) {
@@ -330,7 +367,7 @@ static int get_fd_from_uri(JNIEnv *env, jobject context, jobject uri, const char
     // ParcelFileDescriptor.close() will be called in the cleanup section
     // to ensure it\'s closed even if dup fails or fd is invalid.
 
-get_fd_cleanup:
+    get_fd_cleanup:
     if (parcelFileDescriptor) {
         if (pfdClass) { // pfdClass should have been obtained if parcelFileDescriptor is not null
             closeMethod = env->GetMethodID(pfdClass, "close", "()V");
@@ -347,10 +384,10 @@ get_fd_cleanup:
                 LOGE("Failed to get closeMethod for ParcelFileDescriptor. Original FD might be leaked if not dup-ed and closed elsewhere.");
             }
         } else {
-             // This case (parcelFileDescriptor != null but pfdClass == null) should ideally not happen
-             // if pfdClass is obtained right after parcelFileDescriptor.
-             // However, if it could, ParcelFileDescriptor cannot be closed via JNI here.
-             LOGE("pfdClass is null, cannot call close on ParcelFileDescriptor. Original FD might be leaked.");
+            // This case (parcelFileDescriptor != null but pfdClass == null) should ideally not happen
+            // if pfdClass is obtained right after parcelFileDescriptor.
+            // However, if it could, ParcelFileDescriptor cannot be closed via JNI here.
+            LOGE("pfdClass is null, cannot call close on ParcelFileDescriptor. Original FD might be leaked.");
         }
         env->DeleteLocalRef(parcelFileDescriptor); // Delete ref after attempting close
         parcelFileDescriptor = nullptr;
@@ -382,7 +419,7 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeUri(JNIEnv *env, jobject /* this */
     jstring tempOutputPathJStr = nullptr;
     jstring cacheDirJStr = nullptr;
     const char* cacheDirStr = nullptr;
-    
+
     jclass fileClass = nullptr;
     jmethodID getCacheDirMethod = 0;
     jobject cacheDirFile = nullptr;
@@ -406,7 +443,7 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeUri(JNIEnv *env, jobject /* this */
     if (codec_name_jstr) codecName = env->GetStringUTFChars(codec_name_jstr, nullptr);
     if (!codecName) {
         LOGE("Failed to get codec name string");
-        ret = -101; 
+        ret = -101;
         goto cleanup;
     }
     LOGI("decodeUri START: codec=%s", codecName);
@@ -420,22 +457,22 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeUri(JNIEnv *env, jobject /* this */
     LOGI("Obtained input FD: %d", inputFd);
 
     fileClass = env->FindClass("java/io/File");
-    if (!fileClass) { 
+    if (!fileClass) {
         LOGE("Failed to find java/io/File class");
-        ret = -103; 
+        ret = -103;
         goto cleanup;
     }
 
     localContextClassForCacheDir = env->GetObjectClass(context_obj);
     if (!localContextClassForCacheDir) {
         LOGE("Failed to get local context class for getCacheDir");
-        ret = -104; 
+        ret = -104;
         goto cleanup;
     }
     getCacheDirMethod = env->GetMethodID(localContextClassForCacheDir, "getCacheDir", "()Ljava/io/File;");
     // No longer need localContextClassForCacheDir after getting method ID
-    // env->DeleteLocalRef(localContextClassForCacheDir); 
-    // localContextClassForCacheDir = nullptr; 
+    // env->DeleteLocalRef(localContextClassForCacheDir);
+    // localContextClassForCacheDir = nullptr;
 
     if(!getCacheDirMethod) {
         LOGE("Failed to find getCacheDir method");
@@ -447,8 +484,8 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeUri(JNIEnv *env, jobject /* this */
 
     cacheDirFile = env->CallObjectMethod(context_obj, getCacheDirMethod);
     if (localContextClassForCacheDir) { // Release after use if not already released
-         env->DeleteLocalRef(localContextClassForCacheDir);
-         localContextClassForCacheDir = nullptr;
+        env->DeleteLocalRef(localContextClassForCacheDir);
+        localContextClassForCacheDir = nullptr;
     }
     if(!cacheDirFile) {
         LOGE("Failed to get cache directory file object");
@@ -476,12 +513,12 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeUri(JNIEnv *env, jobject /* this */
     }
     snprintf(tempInputPath, sizeof(tempInputPath) -1, "%s/temp_input.video", cacheDirStr);
     snprintf(tempOutputPath, sizeof(tempOutputPath) -1, "%s/temp_output.yuv", cacheDirStr);
-    
+
     // Release cacheDirStr as soon as it\'s used to form paths
     // env->ReleaseStringUTFChars(cacheDirJStr, cacheDirStr); // Will be released in cleanup
-    // cacheDirStr = nullptr; 
+    // cacheDirStr = nullptr;
     // env->DeleteLocalRef(cacheDirJStr); // Will be released in cleanup
-    // cacheDirJStr = nullptr; 
+    // cacheDirJStr = nullptr;
 
     LOGI("Temporary input file path: %s", tempInputPath);
     LOGI("Temporary output file path: %s", tempOutputPath);
@@ -513,24 +550,24 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeUri(JNIEnv *env, jobject /* this */
         goto cleanup;
     }
     LOGI("Finished copying from input FD %d to temporary file \\'%s\\'. Total bytes written: %zd", inputFd, tempInputPath, totalBytesWritten_copy);
-    
+
     if (fclose(tempInputFile) != 0) {
         LOGW("fclose failed for tempInputFile \\'%s\\': %s", tempInputPath, strerror(errno));
         // Not critical enough to override primary error if one occurred, but good to log.
     }
-    tempInputFile = nullptr; 
+    tempInputFile = nullptr;
     LOGI("Closed temporary input file \\'%s\\'.", tempInputPath);
 
     tempInputPathJStr = env->NewStringUTF(tempInputPath);
     if(!tempInputPathJStr) {
         LOGE("Failed to create Java String for temp input path");
-        ret = -113; 
+        ret = -113;
         goto cleanup;
     }
     tempOutputPathJStr = env->NewStringUTF(tempOutputPath);
     if(!tempOutputPathJStr) {
         LOGE("Failed to create Java String for temp output path");
-        ret = -114; 
+        ret = -114;
         goto cleanup;
     }
 
@@ -539,7 +576,7 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeUri(JNIEnv *env, jobject /* this */
     if (ret != 0) {
         LOGE("Decoding from temp file to temp file failed with code %d", ret);
         // \'ret\' already holds the error from decodeFile
-        goto cleanup; 
+        goto cleanup;
     }
     LOGI("decodeFile call finished successfully (ret=%d).", ret);
 
@@ -559,7 +596,7 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeUri(JNIEnv *env, jobject /* this */
         goto cleanup;
     }
     LOGI("Opened temporary output file \\'%s\\' for reading to copy to output FD.", tempOutputPath);
-    
+
     totalBytesWritten_copy = 0;
     LOGI("Starting copy from temporary output file \\'%s\\' to output FD %d", tempOutputPath, outputFd);
     while ((bytesRead_copy = fread(copyBuffer, 1, sizeof(copyBuffer), tempOutputFile)) > 0) {
@@ -569,12 +606,12 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeUri(JNIEnv *env, jobject /* this */
             bytesWritten_copy = write(outputFd, current_pos, remainingToWrite);
             if (bytesWritten_copy < 0) {
                 LOGE("Error writing to final output FD %d: %s (errno %d)", outputFd, strerror(errno), errno);
-                ret = -117; 
+                ret = -117;
                 goto cleanup;
             } else if (bytesWritten_copy == 0) {
-                 LOGE("write() returned 0 to FD %d. This usually means the operation would block or an error.", outputFd);
-                 ret = -118;
-                 goto cleanup;
+                LOGE("write() returned 0 to FD %d. This usually means the operation would block or an error.", outputFd);
+                ret = -118;
+                goto cleanup;
             }
             remainingToWrite -= bytesWritten_copy;
             current_pos += bytesWritten_copy;
@@ -583,7 +620,7 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeUri(JNIEnv *env, jobject /* this */
     }
     if (ferror(tempOutputFile)) {
         LOGE("Error reading from temporary output file \\'%s\\' after loop: %s (errno %d)", tempOutputPath, strerror(errno), errno);
-        ret = -119; 
+        ret = -119;
         goto cleanup;
     }
     LOGI("Finished copying from temporary output file \\'%s\\' to output FD %d. Total bytes written: %zd", tempOutputPath, outputFd, totalBytesWritten_copy);
@@ -601,7 +638,7 @@ Java_com_brison_hevctest_FFmpegDecoder_decodeUri(JNIEnv *env, jobject /* this */
     LOGI("Successfully copied decoded data to output URI via FD %d. Current ret value: %d", outputFd, ret);
 
 
-cleanup:
+    cleanup:
     LOGI("decodeUri cleanup started. Current ret = %d", ret);
     if (tempInputFile) { // Should be null if already closed
         LOGI("Closing tempInputFile \\'%s\\' (should already be closed if logic is correct)", tempInputPath);
@@ -611,7 +648,7 @@ cleanup:
     if (tempOutputFile) {
         LOGI("Closing tempOutputFile \\'%s\\'", tempOutputPath);
         if (fclose(tempOutputFile) != 0) {
-             LOGW("fclose failed for tempOutputFile \\'%s\\': %s", tempOutputPath, strerror(errno));
+            LOGW("fclose failed for tempOutputFile \\'%s\\': %s", tempOutputPath, strerror(errno));
         }
         tempOutputFile = nullptr;
     }
@@ -633,7 +670,7 @@ cleanup:
         LOGI("Closing input FD %d", inputFd);
         if (close(inputFd) == -1) {
             LOGW("Failed to close input FD %d: %s (errno %d)", inputFd, strerror(errno), errno);
-            if (ret == 0) ret = -121; 
+            if (ret == 0) ret = -121;
         } else {
             LOGI("Input FD %d closed.", inputFd);
         }
@@ -643,8 +680,8 @@ cleanup:
         if (close(outputFd) == -1) {
             LOGW("Failed to close output FD %d: %s (errno %d)", outputFd, strerror(errno), errno);
             // Prioritize FD close error if primary operation was success or a less critical error.
-            if (ret == 0 || ret > -110 || ret == -120) { 
-                 ret = -122; 
+            if (ret == 0 || ret > -110 || ret == -120) {
+                ret = -122;
             }
         } else {
             LOGI("Output FD %d closed.", outputFd);
@@ -655,8 +692,8 @@ cleanup:
         env->ReleaseStringUTFChars(codec_name_jstr, codecName);
     }
     if (cacheDirStr && cacheDirJStr) { // Release C string obtained from Java string
-         env->ReleaseStringUTFChars(cacheDirJStr, cacheDirStr);
-         cacheDirStr = nullptr;
+        env->ReleaseStringUTFChars(cacheDirJStr, cacheDirStr);
+        cacheDirStr = nullptr;
     }
 
 
@@ -667,7 +704,7 @@ cleanup:
     if (cacheDirFile) env->DeleteLocalRef(cacheDirFile); // JNI object for cache dir File
     if (fileClass) env->DeleteLocalRef(fileClass); // JNI class for java.io.File
     if (localContextClassForCacheDir) env->DeleteLocalRef(localContextClassForCacheDir); // Class of context_obj (if not already released)
-    
+
     LOGI("decodeUri END: final ret=%d", ret);
     return ret;
 }
